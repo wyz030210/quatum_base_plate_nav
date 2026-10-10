@@ -1,0 +1,8 @@
+#全局参数
+ros_parameters:
+  use_sim_time: false     #是否使用仿真时间
+  autostart: true        #是否自动启动所有节点
+
+
+
+

@@ -1,0 +1,119 @@
+# 全覆盖路径规划 —— coverage_server 参数
+#
+# 本文件的值按【真实阿克曼底盘】的物理真值重算，不是仿真（TurtleBot3 Burger）遗留值。
+# 车辆真值来源：
+#   footprint  [[-0.44,-0.34],[-0.44,0.34],[0.44,0.34],[0.44,-0.34]]  = 0.88 x 0.68 m
+#              → 外接圆半径 0.556 m、内切圆半径 0.34 m
+#              (param_mini_diff_indoor.yaml:203,245)
+#   轴距 0.30 m / 轮距 0.25 m / 轮半径 0.1275 m  (vehicle_params.yaml:8-13)
+#   最大前进/倒车速度 0.25 / 0.10 m/s，最大角速度 0.50 rad/s
+#
+# 参数语义来自源码（非猜测）：
+#   robot_width / operation_width / min_turning_radius / linear_curv_change
+#     → opennav_coverage/include/opennav_coverage/robot_params.hpp:45-59
+#   其余 default_* → coverage_server 的 declare_parameter_if_not_declared
+#
+# ✅ 本文件的值已经过 A-4 离线几何实测（18x14 m 矩形，闭合多边形）：
+#    实测转弯半径 0.545 m、路径长度 371.7 m、【冲出作业区边界 0.000 m】。
+#    另验证：条带间距 = operation_width、地头内缩 = default_headland_width 均精确生效。
+#    完整实测数据与设计规则见 doc/Coverage_Porting_Plan.md §5.1.2 ~ §5.1.4 与 §7 A-4。
+#
+# ⚠️ 仍未实测的两项（属阶段 B，上车前必做）：
+#    min_turning_radius 0.52 是【几何估算】(轴距/tan(舵角))，需 B1/B2 标定验证；
+#    linear_curv_change 200 偏乐观（假设舵机瞬时到位），实测舵机速率后可收紧到 ~25。
+coverage_server:
+  ros__parameters:
+    # ── 坐标系 ──────────────────────────────────────────────
+    # 多边形用 map 坐标系笛卡尔坐标传入，不涉及 UTM/经纬度
+    coordinates_in_cartesian_frame: true
+
+    # ── 车辆几何（F2C Robot 模型）────────────────────────────
+    # 车体宽度 = footprint 宽 0.68 m。F2C 的 Robot 模型只有宽度，没有长度
+    robot_width: 0.68
+
+    # 覆盖带间距（swath 间距）。
+    # ⚠️ F2C 用本值确定相邻条带的间距（fields2cover.cpp:111 用 getCovWidth()）。
+    # 因此本值必须 <= robot_width(0.68)，否则相邻两趟之间会留下未覆盖的带：
+    #   0.80 → 0.12 m 漏扫带（A-4 实测前的原值，是错的）
+    #   0.68 → 零重叠、无漏扫
+    #   0.60 → 12% 重叠、无漏扫（本次取值，平衡）
+    #   0.51 → 25% 重叠、无漏扫（路径更长；定位/跟随误差大时更稳妥）
+    # A-4 实测：本值还会影响转弯能否收进地头（见下方 default_headland_width）。
+    operation_width: 0.60
+
+    # 最小转弯半径。【实测值】—— 车体中心/后轴中心画圆，半径 0.95 m。
+    #
+    # ⚠️ 不要用几何公式反推。按 max_steering_angle_deg=30° 与轴距 0.30 m 算得
+    #    R = 0.30/tan(30°) = 0.52 m，但实测是 0.95 m —— 说明该角度参数与实际
+    #    前轮转角不符：实际满舵约 17.5°（tan⁻¹(0.30/0.95)）。
+    #    原因见 max_steering_angle_deg 的修正（30 → 17.5）：该参数既是自行车模型的
+    #    钳位、又是舵机满量程，配 30° 时命令 30° 只得到 17.5° 的实际转角，
+    #    增益偏差 0.583，导致 MPPI 系统性转向不足 1.71 倍。
+    min_turning_radius: 0.95
+
+    # 曲率变化率上限（= F2C Robot::setMaxDiffCurv，转向速率约束）
+    # 它被传给 steering_functions 的 CC00_Dubins_State_Space(max_curv, max_curv_change_rate, ...)
+    # 见 Fields2Cover/src/fields2cover/path_planning/dubins_curves_cc.cpp:32-36：
+    # 值越大 → 允许曲率变化越快 → 转弯越急；值越小 → 要求越平缓的过渡弧 → 转弯越宽。
+    #
+    # ⚠️ 此项是 A-4 实测中【对越界影响最大】的参数。原值 1.0 被实测证明不可用：
+    #    lin_curv=1.0    → 实际转弯半径 1.121 m（膨胀到设定值的 1.87 倍），冲出田块 2.549 m
+    #    lin_curv=2.0    → 0.818 m，冲出 1.429 m
+    #    lin_curv=200    → 0.621 m（≈ min_turning_radius），冲出 0.566 m
+    # 规律：>= 50 时实际转弯半径就基本等于 min_turning_radius（过渡弧短到可忽略）。
+    #
+    # 物理量级 = κ_max / (T_舵机 · v) = (1/0.52)/(T·0.25) = 7.69/T：
+    #   舵机 0.3 s 打满 → ≈26；0.5 s → ≈15；1.0 s → ≈7.7
+    # 即物理上是 8~26，取 200 相当于"假设舵机瞬时到位"（与仿真一致，偏乐观但安全）。
+    # 【阶段 B2】实测舵机速率后可收紧到物理值（如 25），届时复核转弯半径是否仍 ≈ 0.52。
+    linear_curv_change: 200.0
+
+    # ── 地头（headland）─────────────────────────────────────
+    # 重叠已通过 operation_width 体现，无需再开 allow_overlap
+    default_allow_overlap: false
+
+    # 显式写死，消除对"编译期默认值"的隐式依赖
+    # （代码默认确为 CONSTANT，但写得明白，将来上游改默认也不受影响）
+    default_headland_type: "CONSTANT"
+
+    # 地头宽度。地头是车在地块边缘掉头用的空间。
+    #
+    # ⚠️ 初版写的规则"必须 >= 最小转弯半径 + 余量（R + 0.10）"是【错的】。
+    # 地头要装下的不是转弯半径，而是【整个转弯的外冲量】，而外冲量取决于
+    # operation_width 与 2×转弯半径 的关系：
+    #   若 operation_width >= 2R  → 转弯能收在两条条带之间，外冲为 0，地头需求小
+    #   若 operation_width <  2R  → 转不过来，必须向外绕，外冲量由地头吸收
+    # 本车：operation_width 0.60 < 2 × 0.545 = 1.09，所以必须靠地头吸收。
+    #
+    # A-4 实测（R=0.95 实测值、op=0.60、lin_curv=200、REEDS_SHEPP）：
+    #   headland 1.00 → 越界 0.000 m（临界）
+    #   headland 1.30 → 越界 0.000 m（本次取值，有余量）
+    #   若把 default_path_type 改回 "DUBIN"，则必须加大到 2.80 m 才能零越界。
+    #
+    # 注：地头本身【也会被覆盖】（F2C 为地头单独生成条带），加宽不是浪费作业面积。
+    default_headland_width: 1.30
+
+    # ── 路径生成 ────────────────────────────────────────────
+    # 阿克曼车不能原地转向 → 必须连续（Dubins）路径，不能有断点
+    # 注意：这里是在改回正确值 —— opennav 代码默认本就是 CONTINUOUS，
+    # 本工作区此前把它显式改成了 DISCONTINUOUS（差速车才适用）
+    default_path_continuity_type: "CONTINUOUS"
+    # ⚠️ REEDS_SHEPP 允许在掉头时倒车（三点掉头），是把地头需求从 2.80 m 降到 1.30 m 的关键。
+    # A-4 实测（R=0.95, op=0.60, lin_curv=200）：
+    #   DUBIN       + 地头 2.80 → 越界 0.000，路径 301 m（全程前进，但地头很大）
+    #   REEDS_SHEPP + 地头 1.30 → 越界 0.000，路径 371 m（本次取值，地头小）
+    #   REEDS_SHEPP + 地头 1.00 → 越界 0.000（临界）
+    # 若现场地头空间充裕且希望全程不倒车 → 改回 "DUBIN" 并把 default_headland_width 提到 2.80。
+    # 注意倒车受 vehicle_can_bridge 的 max_reverse_speed = 0.10 m/s 限制，会慢。
+    default_path_type: "REEDS_SHEPP"
+
+    # 往返式（Boustrophedon）路线顺序
+    default_route_type: "BOUSTROPHEDON"
+
+    # 固定角度（Q17a），保证每次生成结果可复现
+    default_swath_angle_type: "SET_ANGLE"
+    default_swath_angle: 1.57        # 若条带方向不理想，改 0.0 再试
+    default_swath_type: "NUMBER"     # SET_ANGLE 下该目标函数不参与寻优，无实际影响
+
+    # 路径离散化间距
+    default_turn_point_distance: 0.05

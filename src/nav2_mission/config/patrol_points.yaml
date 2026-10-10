@@ -1,0 +1,42 @@
+patrol:
+  frame_id: map
+
+  loop: 
+    enabled: false
+    max_loops: 1   #0 是无限循环 1 循环1次 N 跑N次
+
+  timing:
+    goal_timeout_sec: 120.0
+    waypoint_pause_sec: 15.0
+  
+  failure:
+    retry_per_waypoint: 2   #每个点失败后重试2次
+    policy: skip_waypoint
+    max_total_failures: 5   #累积失败超过这个值就终止任务
+
+  waypoints:
+   # 在每个巡检点添加action 字段，用于触发拍照
+    - name: checkpoint_1
+      x: 3.0
+      y: 0.0
+      yaw_deg: 90.0
+      action: detect_facility
+
+    
+    - name: checkpoint_2
+      x: 6.0
+      y: 0.0
+      yaw_deg: 90.0
+      action: detect_facility
+
+    - #name: checkpoint_3
+      #x: 2.20
+      #y: 2.10
+      #yaw_deg: -90.0
+      #action: detect_facility
+
+    - #name: return_home       # 返回起点（可选）
+      #x: 0.0
+      #y: 0.0
+      #yaw_deg: 0.0
+      #action: none            # 不拍照

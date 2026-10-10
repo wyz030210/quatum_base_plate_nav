@@ -1,0 +1,390 @@
+# amcl:
+#   ros__parameters:
+#     use_sim_time: False
+#     alpha1: 0.5
+#     alpha2: 0.2
+#     alpha3: 0.2
+#     alpha4: 0.4
+#     alpha5: 0.2
+#     base_frame_id: "base_link"     #修改
+#     beam_skip_distance: 0.5
+#     beam_skip_error_threshold: 0.9
+#     beam_skip_threshold: 0.3
+#     do_beamskip: false
+#     global_frame_id: "map"
+#     lambda_short: 0.1
+#     laser_likelihood_max_dist: 2.0
+#     laser_max_range: 12.0
+#     laser_min_range: 0.15
+#     laser_model_type: "likelihood_field"
+#     max_beams: 30
+#     max_particles: 2000
+#     min_particles: 500
+#     odom_frame_id: "odom"
+#     pf_err: 0.02
+#     pf_z: 0.85
+#     recovery_alpha_fast: 0.0
+#     recovery_alpha_slow: 0.0
+#     resample_interval: 2
+#     robot_model_type: "nav2_amcl::DifferentialMotionModel"
+#     save_pose_rate: 0.5
+#     sigma_hit: 0.1
+#     tf_broadcast: false
+#     transform_tolerance: 1.0
+#     update_min_a: 0.05
+#     update_min_d: 0.02
+#     z_hit: 0.9
+#     z_max: 0.05
+#     z_rand: 0.1
+#     z_short: 0.05
+#     scan_topic: /scan
+#     publish_particle_cloud: true
+#     set_initial_pose: false
+#     odom_topic: /odometry/filtered  # <--- 新增这一行
+    
+# amcl_map_client:
+#   ros__parameters:
+#     use_sim_time: False
+
+# amcl_rclcpp_node:
+#   ros__parameters:
+#     use_sim_time: False
+
+bt_navigator:
+  ros__parameters:
+    use_sim_time: False
+    transform_tolerance: 1.0
+    goal_reached_tol: 0.25
+    global_frame: map
+    robot_base_frame: base_link     #修改
+    
+    bt_loop_duration: 10
+    default_server_timeout: 20
+    error_code_names:
+    - compute_path_error_code 
+    - follow_path_error_code
+
+bt_navigator_rclcpp_node:
+  ros__parameters:
+    use_sim_time: False
+
+controller_server:
+  ros__parameters:
+    use_sim_time: False                             
+    controller_frequency: 20.0                      
+    controller_plugins: ["FollowPath"]              
+    odom_topic: /odometry/filtered_map                             
+    cmd_vel_topic: /cmd_vel  # 明确指定速度命令话题
+
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugin: "goal_checker"             
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.5
+      movement_time_allowance: 10.0
+
+    goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.3        
+      yaw_goal_tolerance: 2.0       
+      stateful: True
+
+    FollowPath:
+      plugin: "nav2_mppi_controller::MPPIController" 
+      
+      # 基础参数保持不变
+      time_steps: 56    
+      model_dt: 0.05    
+      batch_size: 1000  
+      
+      # 噪声参数微调
+      vx_std: 0.25      
+      vy_std: 0.0       
+      wz_std: 0.5       
+      
+      # 运动约束
+      vx_max: 1.2       
+      vx_min: -0.4      
+      vy_max: 0.0       
+      wz_max: 2.0       
+      ax_max: 2.0       
+      ax_min: -2.0      
+      ay_max: 0.0
+      az_max: 2.5       
+      
+      iteration_count: 1 
+      prune_distance: 2.0 
+      enforce_path_inversion: false
+      transform_tolerance: 0.1 
+      
+      # 核心优化：调整选择性和平滑度
+      temperature: 0.2   # 从0.3降低到0.2，更倾向于低成本轨迹
+      gamma: 0.015       
+      
+      motion_model: "DiffDrive" 
+      
+      # 可视化设置 - 减少显示密度
+      visualize: true                     
+      publish_optimal_trajectory: true    
+      
+      TrajectoryVisualizer:
+        trajectory_step: 8                # 从5增加到8，减少显示的轨迹数量
+        time_step: 4                      # 从3增加到4，轨迹点更稀疏
+      
+      # 核心优化：目标点附近更快重置优化器
+      retry_attempt_limit: 1
+      reset_period: 0.3                   # 关键修改：从1.0降低到0.3秒
+      regenerate_noises: true             # 每次迭代重新生成噪声
+      open_loop: false                    # 使用里程计而非上次命令
+      
+      AckermannConstraints:
+        min_turning_r: 0.25 
+      
+      critics: ["ConstraintCritic", "ObstaclesCritic", "GoalCritic", "GoalAngleCritic", "PathAlignCritic", "PathFollowCritic", "PathAngleCritic", "PreferForwardCritic"]
+      
+      ConstraintCritic:
+        enabled: true
+        cost_power: 1 
+        cost_weight: 4.0  
+      
+      GoalAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.0 
+        # 关键优化：显著降低阈值，减少目标点附近的过度角度调整
+        threshold_to_consider: 0.3  # 从0.5降低到0.3米
+        symmetric_yaw_tolerance: true  # 新增：允许对称朝向到达
+
+      GoalCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 15.0 
+        # 关键优化：降低阈值，更早接管控制
+        threshold_to_consider: 1.0  # 从2.5降低到1.0米
+
+      ObstaclesCritic:
+        enabled: true
+        cost_power: 1
+        repulsion_weight: 1.2 
+        critical_weight: 30.0 
+        consider_footprint: true 
+        collision_cost: 10000.0 
+        collision_margin_distance: 0.25 
+        near_goal_distance: 0.3 
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.6  
+
+      PreferForwardCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 2.0  # 从1.5增加到2.0，更倾向于前进
+        threshold_to_consider: 0.3  # 从0.5降低到0.3
+      
+      PathAlignCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 25.0 
+        max_path_occupancy_ratio: 0.07 
+        trajectory_point_step: 4
+        # 关键优化：与GoalCritic阈值对齐
+        threshold_to_consider: 1.0  # 从0.5增加到1.0
+        offset_from_furthest: 20 
+        use_path_orientations: false 
+
+      PathAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 2.0  # 从4.0降低到2.0，减少急转弯倾向
+        offset_from_furthest: 4 
+        threshold_to_consider: 0.3  # 从0.5降低到0.3
+        max_angle_to_furthest: 0.8  # 从1.0降低到0.8，减少最大允许角度
+        mode: 0
+
+      PathFollowCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 15.0 
+        offset_from_furthest: 5
+        # 关键优化：与GoalCritic对齐
+        threshold_to_consider: 1.0  # 从1.4降低到1.0
+
+controller_server_rclcpp_node:
+  ros__parameters:
+    use_sim_time: False
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 10.0            
+      publish_frequency: 5.0
+      global_frame: odom
+      robot_base_frame: base_link    #修改
+      use_sim_time: False
+      rolling_window: true
+      width: 6                          
+      height: 6
+      resolution: 0.05
+      
+      footprint: "[[-0.4, -0.2], [-0.4, 0.2], [0.4, 0.2], [0.4, -0.2]]"
+      
+      plugins: ["obstacle_layer","inflation_layer"]
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 2.5        
+        inflation_radius: 0.6           
+
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: True
+        observation_sources: scan
+        scan:
+          topic: /scan
+          data_type: "LaserScan"
+          clearing: True
+          marking: True
+          max_obstacle_height: 0.8
+          min_obstacle_height: 0.0
+          raytrace_max_range: 6.0
+          obstacle_max_range: 4.0
+          obstacle_min_range: 0.25
+
+      always_send_full_costmap: True
+  local_costmap_client:
+    ros__parameters:
+      use_sim_time: False
+  local_costmap_rclcpp_node:
+    ros__parameters:
+      use_sim_time: False
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      update_frequency: 5.0
+      publish_frequency: 2.0
+      global_frame: map
+      robot_base_frame: base_link   #修改
+      use_sim_time: False
+      
+      footprint: "[[-0.4, -0.2], [-0.4, 0.2], [0.4, 0.2], [0.4, -0.2]]"
+      
+      resolution: 0.05
+      track_unknown_space: true
+      plugins: ["static_layer", "inflation_layer"]
+
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: True
+
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.8           
+
+      always_send_full_costmap: True
+  global_costmap_client:
+    ros__parameters:
+      use_sim_time: False
+  global_costmap_rclcpp_node:
+    ros__parameters:
+      use_sim_time: False
+
+map_server:
+  ros__parameters:
+    use_sim_time: False
+    yaml_filename: ""
+
+map_saver:
+  ros__parameters:
+    use_sim_time: False
+    save_map_timeout: 5.0
+    free_thresh_default: 0.25
+    occupied_thresh_default: 0.65
+    map_subscribe_transient_local: True
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 10.0
+    use_sim_time: False
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_smac_planner/SmacPlannerHybrid"
+      tolerance: 0.3
+      downsample_costmap: false
+      downsampling_factor: 1
+      allow_unknown: true
+      max_iterations: 1000000
+      max_on_approach_iterations: 1000
+      max_planning_time: 10.0
+      motion_model_for_search: "DUBIN"
+      cost_travel_multiplier: 2.0
+      angle_quantization_bins: 72
+      analytic_expansion_ratio: 3.0
+      analytic_expansion_max_cost: 100.0
+      minimum_turning_radius: 0.6
+      reverse_penalty: 2.0
+      change_penalty: 0.2
+      non_straight_penalty: 1.5
+      cost_penalty: 2.0
+      lookup_table_size: 20.0
+      cache_obstacle_heuristic: True
+      smooth_path: true
+      smoother:
+        max_iterations: 1000
+        w_smooth: 0.3
+        w_data: 0.2
+        tolerance: 1.0e-10
+
+planner_server_rclcpp_node:
+  ros__parameters:
+    use_sim_time: False
+
+smoother_server:
+  ros__parameters:
+    use_sim_time: True
+    smoother_plugins: ["simple_smoother"]
+    simple_smoother:
+      plugin: "nav2_smoother::SimpleSmoother"
+      tolerance: 0.1
+      max_its: 1000
+      do_refinement: True
+
+behavior_server:
+  ros__parameters:
+    local_costmap_topic: local_costmap/costmap_raw
+    local_footprint_topic: local_costmap/published_footprint
+    global_costmap_topic: global_costmap/costmap_raw
+    global_footprint_topic: global_costmap/published_footprint
+    cycle_frequency: 10.0
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "wait"]
+    spin:
+      plugin: "nav2_behaviors/Spin"
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors/DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    global_frame: odom
+    robot_base_frame: base_link  #修改
+    transform_tolerance: 0.1
+    use_sim_time: False
+    simulate_ahead_time: 2.0
+    max_rotational_vel: 0.3
+    min_rotational_vel: 0.05
+    rotational_acc_lim: 0.3
+
+robot_state_publisher:
+  ros__parameters:
+    use_sim_time: False
+
+waypoint_follower:
+  ros__parameters:
+    loop_rate: 20
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: True
+      waypoint_pause_duration: 200

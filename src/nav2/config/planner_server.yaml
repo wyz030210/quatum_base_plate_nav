@@ -1,0 +1,10 @@
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 20.0  # 预期规划频率20Hz
+    use_sim_time: True  # 使用仿真时间
+    planner_plugins: ["GridBased"]  # 规划器插件列表，这里使用GridBased（Navfn）
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"  # 插件类型
+      tolerance: 0.5  # 目标容差0.5米
+      use_astar: false  # 是否使用A*算法（false表示使用Dijkstra）
+      allow_unknown: true  # 是否允许未知区域

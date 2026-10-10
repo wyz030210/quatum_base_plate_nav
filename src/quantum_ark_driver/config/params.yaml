@@ -1,0 +1,29 @@
+# Quantum Ark Driver Parameters
+
+quantum_ark_node:
+  ros__parameters:
+    # Serial port connected to USB-CAN adapter
+    serial_port: "/dev/ttyUSB0"
+    serial_baudrate: 2000000
+
+    # TF frame IDs
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+
+    # Vehicle geometry
+    wheelbase: 0.30          # meters, front-to-rear axle distance
+
+    # Odometry publish rate (Hz)
+    publish_rate: 50.0
+
+    # cmd_vel timeout (seconds) - stops robot if no message received
+    cmd_vel_timeout: 1.0
+
+    # Vehicle physical parameters (for reference / future use)
+    wheel_radius: 0.1275     # meters
+    motor_pole_pairs: 15
+    gear_ratio: 1.0
+
+    # Speed limits (m/s)
+    max_linear_speed: 2.0
+    max_angular_speed: 2.0

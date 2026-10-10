@@ -1,0 +1,61 @@
+# 注意：本文件与原 ROS1 包一致，不被任何 launch 文件加载（原包 4 个 launch
+# 都用逐个 <param> 字面量赋值，从未用 <rosparam file=...> 加载本文件）。
+# 仅作参考配置保留，ROS2 移植不改变这一"未接线"状态。
+#
+# 车辆物理参数
+vehicle:
+  # 轮子参数
+  wheel_diameter: 0.255    # 轮子直径 (m) - 255mm
+  wheel_radius: 0.1275     # 轮子半径 (m)
+
+  # 阿克曼结构参数
+  wheelbase: 0.3           # 轴距 (m) - 前后轮距离
+  track_width: 0.25        # 轮距 (m) - 左右轮距离
+
+  # 舵机参数
+  servo_center_angle: 90.0  # 舵机中位角度 (度)
+  servo_max_angle: 30.0     # 舵机最大转角 (度)
+  steering_ratio: 15.0      # 转向比 (舵机角度/前轮角度)
+
+# 控制参数
+control:
+  # 速度限制
+  max_linear_speed: 10.0     # 最大线速度 (m/s)
+  max_angular_speed: 3.14   # 最大角速度 (rad/s)
+
+  # 查询频率
+  speed_query_frequency: 1.0  # 速度查询频率 (Hz)
+  auto_query_enabled: false   # 是否启用自动查询
+
+  # 控制模式
+  control_mode: "manual"      # manual/auto
+
+# 里程计参数
+odometry:
+  # 发布频率
+  publish_frequency: 10.0    # 里程计发布频率 (Hz)
+
+  # 噪声参数
+  linear_velocity_noise: 0.01   # 线速度噪声标准差
+  angular_velocity_noise: 0.01  # 角速度噪声标准差
+
+  # 协方差矩阵 (6x6)
+  pose_covariance: [0.01, 0, 0, 0, 0, 0,     # x
+                    0, 0.01, 0, 0, 0, 0,       # y
+                    0, 0, 0.01, 0, 0, 0,       # z
+                    0, 0, 0, 0.01, 0, 0,       # roll
+                    0, 0, 0, 0, 0.01, 0,       # pitch
+                    0, 0, 0, 0, 0, 0.01]       # yaw
+
+  twist_covariance: [0.01, 0, 0, 0, 0, 0,     # linear.x
+                     0, 0.01, 0, 0, 0, 0,      # linear.y
+                     0, 0, 0.01, 0, 0, 0,      # linear.z
+                     0, 0, 0, 0.01, 0, 0,      # angular.x
+                     0, 0, 0, 0, 0.01, 0,      # angular.y
+                     0, 0, 0, 0, 0, 0.01]      # angular.z
+
+# 驱动器参数
+drives:
+  count: 4                   # 驱动器数量
+  can_ids: [1, 2, 3, 4]     # 驱动器CAN ID列表
+  max_erpm: 150              # 最大ERPM (根据±2m/s计算)

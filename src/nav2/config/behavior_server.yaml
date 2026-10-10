@@ -1,0 +1,24 @@
+behavior_server:
+  ros__parameters:
+    costmap_topic: local_costmap/costmap_raw  # 代价地图话题
+    footprint_topic: local_costmap/published_footprint  # 足迹话题
+    cycle_frequency: 10.0  # 循环频率10Hz
+    behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]  # 行为插件列表
+    spin:
+      plugin: "nav2_behaviors/Spin"  # 旋转行为插件
+    backup:
+      plugin: "nav2_behaviors/BackUp"  # 备份行为插件
+    drive_on_heading:
+      plugin: "nav2_behaviors/DriveOnHeading"  # 定向驱动行为插件
+    wait:
+      plugin: "nav2_behaviors/Wait"  # 等待行为插件
+    assisted_teleop:
+      plugin: "nav2_behaviors/AssistedTeleop"  # 辅助遥操作行为插件
+    global_frame: odom  # 全局框架odom
+    robot_base_frame: base_link  # 机器人基座框架
+    transform_tolerance: 0.1  # 变换容差0.1秒
+    use_sim_time: true  # 使用仿真时间
+    simulate_ahead_time: 2.0  # 模拟提前时间2秒
+    max_rotational_vel: 1.0  # 最大旋转速度1.0弧度/秒
+    min_rotational_vel: 0.4  # 最小旋转速度0.4弧度/秒
+    rotational_acc_lim: 3.2  # 旋转加速度限制3.2弧度/秒²

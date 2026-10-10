@@ -1,0 +1,18 @@
+/build/
+/install/
+/log/
+/.pytest_cache/
+**/.vscode/
+/.claude/
+
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+
+# Keep the existing upstream repositories independent.
+/src/Fields2Cover/
+/src/opennav_coverage/
+
+*.swp
+*.swo
+*~

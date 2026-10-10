@@ -1,0 +1,64 @@
+controller_server:
+  ros__parameters:
+    use_sim_time: True  # 使用仿真时间
+    controller_frequency: 20.0  # 控制器运行频率（Hz）
+    min_x_velocity_threshold: 0.001  # x方向最小速度阈值
+    min_y_velocity_threshold: 0.5  # y方向最小速度阈值（对于差分驱动，y速度通常为0）
+    min_theta_velocity_threshold: 0.001  # 旋转最小速度阈值
+    failure_tolerance: 0.3  # 失败容差
+    progress_checker_plugin: "progress_checker"  # 进度检查器插件
+    goal_checker_plugins: ["general_goal_checker"] # 目标检查器插件列表，这里使用通用目标检查器
+    controller_plugins: ["FollowPath"]  # 控制器插件列表，这里使用FollowPath（DWB）
+
+    # 进度检查器参数
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"  # 插件类型
+      required_movement_radius: 0.5  # 要求移动半径0.5米
+      movement_time_allowance: 10.0  # 移动时间允许10秒
+    # 目标检查器参数
+    general_goal_checker:
+      stateful: True  # 有状态检查
+      plugin: "nav2_controller::SimpleGoalChecker"  # 插件类型
+      xy_goal_tolerance: 0.25  # xy容差0.25米
+      yaw_goal_tolerance: 0.25  # yaw容差0.25弧度
+
+    # DWB控制器参数
+    FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"  # 插件类型
+      debug_trajectory_details: True  # 调试轨迹细节
+      min_vel_x: 0.0  # 最小x速度
+      min_vel_y: 0.0  # 最小y速度
+      max_vel_x: 0.26  # 最大x速度
+      max_vel_y: 0.0  # 最大y速度
+      max_vel_theta: 0.8  # 最大旋转速度
+      min_speed_xy: 0.0  # 最小xy速度
+      max_speed_xy: 0.26  # 最大xy速度
+      min_speed_theta: 0.0  # 最小旋转速度
+      acc_lim_x: 2.5  # x加速度限制
+      acc_lim_y: 0.0  # y加速度限制
+      acc_lim_theta: 2.0  # 旋转加速度限制
+      decel_lim_x: -2.5  # x减速度限制
+      decel_lim_y: 0.0  # y减速度限制
+      decel_lim_theta: -3.2  # 旋转减速度限制
+      vx_samples: 20  # x速度样本数
+      vy_samples: 5  # y速度样本数
+      vtheta_samples: 20  # 旋转速度样本数
+      sim_time: 1.7  # 模拟时间（秒）
+      linear_granularity: 0.05  # 线性颗粒度（米）
+      angular_granularity: 0.025  # 角度颗粒度（弧度）
+      transform_tolerance: 0.2  # 变换容差（秒）
+      xy_goal_tolerance: 0.25  # xy目标容差（米）
+      trans_stopped_velocity: 0.25  # 停止速度阈值（米/秒）
+      short_circuit_trajectory_evaluation: True  # 短路轨迹评估
+      stateful: True  # 有状态
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist"]  # 批评器列表
+      BaseObstacle.scale: 0.02  # 基础障碍物批评器缩放因子
+      PathAlign.scale: 32.0  # 路径对齐批评器缩放因子
+      PathAlign.forward_point_distance: 0.1  # 路径对齐前向点距离
+      GoalAlign.scale: 24.0  # 目标对齐批评器缩放因子
+      GoalAlign.forward_point_distance: 0.1  # 目标对齐前向点距离
+      PathDist.scale: 32.0  # 路径距离批评器缩放因子
+      GoalDist.scale: 24.0  # 目标距离批评器缩放因子
+      RotateToGoal.scale: 32.0  # 旋转到目标批评器缩放因子
+      RotateToGoal.slowing_factor: 5.0  # 旋转到目标减速因子
+      RotateToGoal.lookahead_time: -1.0  # 旋转到目标前瞻时间（-1表示禁用）
