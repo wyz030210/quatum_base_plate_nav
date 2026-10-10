@@ -31,6 +31,15 @@ Visualization Manager:
         History Policy: Keep Last
       Namespaces:
         coverage_ui: true
+    - Class: rviz_default_plugins/Marker
+      Name: Coverage Swaths
+      Enabled: true
+      Topic:
+        Value: /coverage_server/swaths
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
     - Class: rviz_default_plugins/Path
       Name: Coverage Path
       Enabled: true

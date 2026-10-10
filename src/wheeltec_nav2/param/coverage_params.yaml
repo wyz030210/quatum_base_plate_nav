@@ -6,7 +6,10 @@ coverage_server:
     robot_width: 0.68
     robot_length: 0.88
     operation_width: 0.60
-    min_turning_radius: 0.95
+    # Centerline pitch is independent of the actual covered width.
+    swath_spacing: 2.00
+    # min_turning_radius: 0.95
+    min_turning_radius: 0.80
 
     # Retained pending physical steering-rate measurement; not a verified limit.
     linear_curv_change: 200.0
@@ -22,7 +25,7 @@ coverage_server:
     # This is reserved turning space; this pipeline does NOT cover the outer ring.
     default_headland_width: 1.50
     default_path_continuity_type: "CONTINUOUS"
-    default_path_type: "REEDS_SHEPP"
+    default_path_type: "DUBIN"
     default_route_type: "BOUSTROPHEDON"
     default_swath_angle_type: "SET_ANGLE"
     default_swath_angle: 1.57
