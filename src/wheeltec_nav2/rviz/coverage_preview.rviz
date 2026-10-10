@@ -1,0 +1,86 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Tool Properties
+    Name: Tool Properties
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Enabled: true
+      Cell Size: 1
+      Plane Cell Count: 100
+      Color: 150; 155; 160
+      Alpha: 0.5
+      Reference Frame: <Fixed Frame>
+      Plane: XY
+      Line Style:
+        Value: Lines
+        Line Width: 0.02
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Selected Region
+      Enabled: true
+      Topic:
+        Value: /coverage_ui/markers
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+      Namespaces:
+        coverage_ui: true
+    - Class: rviz_default_plugins/Path
+      Name: Coverage Path
+      Enabled: true
+      Topic:
+        Value: /coverage_ui/preview_path
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+      Buffer Length: 1
+      Color: 0; 160; 75
+      Alpha: 1
+      Line Style: Billboards
+      Line Width: 0.045
+      Pose Style: None
+      Offset:
+        X: 0
+        Y: 0
+        Z: 0.03
+    - Class: rviz_default_plugins/Polygon
+      Name: Planning Core
+      Enabled: false
+      Topic:
+        Value: /coverage_server/planning_field
+        Depth: 1
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+      Color: 0; 155; 200
+      Alpha: 0.7
+  Global Options:
+    Fixed Frame: map
+    Background Color: 240; 242; 245
+    Frame Rate: 30
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/PublishPoint
+      Topic: /clicked_point
+      Single click: false
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Current View
+      Target Frame: <Fixed Frame>
+      Scale: 35
+      Angle: 0
+      X: 0
+      Y: 0
+Window Geometry:
+  Width: 1280
+  Height: 900
