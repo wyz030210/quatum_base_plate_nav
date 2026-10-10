@@ -116,10 +116,11 @@ public:
       std::bind(&CANBridgeNode::headlightBrushCmdCallback, this, std::placeholders::_1));
 
     // 连接串口
-    if (connectSerial()) {
-      setupCAN();
-      startReading();
+    if (!connectSerial()) {
+      throw std::runtime_error("CAN serial connection failed: " + port_);
     }
+    setupCAN();
+    startReading();
 
     // 启动自动速度查询定时器
     if (auto_query_enabled_ && query_frequency_ > 0.0) {
@@ -301,7 +302,9 @@ private:
         RCLCPP_DEBUG(get_logger(), "Sent CAN frame: %s", hex_frame.c_str());
       }
     } catch (const vehicle_can_bridge::IOException & e) {
+      is_connected_ = false;
       RCLCPP_ERROR(get_logger(), "Failed to send CAN message: %s", e.what());
+      throw;
     }
   }
 
@@ -742,8 +745,14 @@ int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
 
-  auto node = std::make_shared<CANBridgeNode>();
-  rclcpp::spin(node);
+  try {
+    auto node = std::make_shared<CANBridgeNode>();
+    rclcpp::spin(node);
+  } catch (const std::exception & e) {
+    RCLCPP_FATAL(rclcpp::get_logger("can_bridge_node"), "CAN bridge stopped: %s", e.what());
+    rclcpp::shutdown();
+    return 1;
+  }
 
   rclcpp::shutdown();
 

@@ -87,8 +87,8 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "trim_path_to_robot",
-                default_value="true",
-                description="Trim nav_path to robot-nearest point before FollowPath",
+                default_value="false",
+                description="Deprecated; coverage progress cannot be inferred from proximity",
             ),
             DeclareLaunchArgument(
                 "base_frame_id",
@@ -97,9 +97,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument(
                 "generate_headland",
-                # 阿克曼车掉头需要地头空间（见 coverage_params.yaml 的
-                # default_headland_width = min_turning_radius + 0.10）。
-                # 不开地头，车会在地块边缘转不过来。
+                # Reserve space for the swept vehicle footprint during turns.
                 default_value="true",
                 description="Whether to generate headland before swath generation",
             ),
@@ -113,6 +111,13 @@ def generate_launch_description():
                 default_value="true",
                 description="Whether to generate nav_path for FollowPath",
             ),
+            DeclareLaunchArgument("navigate_to_start", default_value="true"),
+            DeclareLaunchArgument("navigate_to_pose_action_name", default_value="/navigate_to_pose"),
+            DeclareLaunchArgument("navigate_to_start_timeout_sec", default_value="120.0"),
+            DeclareLaunchArgument("start_position_tolerance", default_value="0.50"),
+            DeclareLaunchArgument("start_yaw_tolerance", default_value="0.50"),
+            DeclareLaunchArgument("validate_path_costmap", default_value="true"),
+            DeclareLaunchArgument("path_valid_service", default_value="/is_path_valid"),
             Node(
                 package="nav2_mission",
                 executable="coverage_navpath_bridge_node",
@@ -134,6 +139,13 @@ def generate_launch_description():
                         "generate_headland": generate_headland,
                         "generate_route": generate_route,
                         "generate_path": generate_path,
+                        "navigate_to_start": LaunchConfiguration("navigate_to_start"),
+                        "navigate_to_pose_action_name": LaunchConfiguration("navigate_to_pose_action_name"),
+                        "navigate_to_start_timeout_sec": LaunchConfiguration("navigate_to_start_timeout_sec"),
+                        "start_position_tolerance": LaunchConfiguration("start_position_tolerance"),
+                        "start_yaw_tolerance": LaunchConfiguration("start_yaw_tolerance"),
+                        "validate_path_costmap": LaunchConfiguration("validate_path_costmap"),
+                        "path_valid_service": LaunchConfiguration("path_valid_service"),
                     }
                 ],
             ),

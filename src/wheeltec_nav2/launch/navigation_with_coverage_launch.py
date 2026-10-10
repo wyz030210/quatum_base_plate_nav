@@ -153,13 +153,24 @@ def generate_launch_description():
     )
 
     controller_overrides = {
-        "cmd_vel_topic": "cmd_vel_nav",
         "FollowPath.vx_max": ParameterValue(max_forward_speed, value_type=float),
         "FollowPath.vx_min": ParameterValue(min_linear_speed, value_type=float),
         "FollowPath.wz_max": ParameterValue(max_yaw_rate, value_type=float),
         "FollowPath.ax_max": ParameterValue(max_linear_accel, value_type=float),
         "FollowPath.ax_min": ParameterValue(min_linear_accel, value_type=float),
         "FollowPath.az_max": ParameterValue(max_yaw_accel, value_type=float),
+        # Humble 1.1.20 uses forward_preference, not the newer PathAngleCritic.mode.
+        "FollowPath.PathAngleCritic.forward_preference": ParameterValue(
+            PythonExpression(["'", use_coverage, "'.lower() not in ('true', '1')"]),
+            value_type=bool
+        ),
+        "FollowPath.PathAlignCritic.use_path_orientations": ParameterValue(
+            use_coverage, value_type=bool
+        ),
+        "FollowPath.PreferForwardCritic.enabled": ParameterValue(
+            PythonExpression(["'", use_coverage, "'.lower() not in ('true', '1')"]),
+            value_type=bool
+        ),
     }
 
     velocity_smoother_overrides = {
@@ -211,7 +222,7 @@ def generate_launch_description():
                 respawn_delay=2.0,
                 parameters=[configured_params, controller_overrides],
                 arguments=["--ros-args", "--log-level", log_level],
-                remappings=remappings,
+                remappings=remappings + [("cmd_vel", "cmd_vel_nav")],
             ),
             Node(
                 package="nav2_planner",
@@ -233,7 +244,7 @@ def generate_launch_description():
                 respawn_delay=2.0,
                 parameters=[configured_params, behavior_overrides],
                 arguments=["--ros-args", "--log-level", log_level],
-                remappings=remappings,
+                remappings=remappings + [("cmd_vel", "cmd_vel_nav")],
             ),
             Node(
                 package="nav2_bt_navigator",
@@ -303,7 +314,7 @@ def generate_launch_description():
                 plugin="nav2_controller::ControllerServer",
                 name="controller_server",
                 parameters=[configured_params, controller_overrides],
-                remappings=remappings,
+                remappings=remappings + [("cmd_vel", "cmd_vel_nav")],
             ),
             ComposableNode(
                 package="nav2_planner",
@@ -317,7 +328,7 @@ def generate_launch_description():
                 plugin="behavior_server::BehaviorServer",
                 name="behavior_server",
                 parameters=[configured_params, behavior_overrides],
-                remappings=remappings,
+                remappings=remappings + [("cmd_vel", "cmd_vel_nav")],
             ),
             ComposableNode(
                 package="nav2_bt_navigator",

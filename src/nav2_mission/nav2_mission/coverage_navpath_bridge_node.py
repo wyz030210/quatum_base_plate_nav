@@ -15,9 +15,12 @@ import rclpy
 from action_msgs.msg import GoalStatus
 from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import Twist
+from copy import deepcopy
+from osgeo import ogr
 from lifecycle_msgs.srv import GetState
 from nav_msgs.msg import Path as NavPathMsg
 from nav2_msgs.action import FollowPath, NavigateToPose
+from nav2_msgs.srv import IsPathValid
 from opennav_coverage_msgs.action import ComputeCoveragePath, NavigateCompleteCoverage
 from opennav_coverage_msgs.msg import Coordinate, Coordinates
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
@@ -51,6 +54,7 @@ class CoverageNavPathBridge(Node):
     ERR_COMPUTE_FAILED = 908
     ERR_SAFETY_ABORT = 909          # 被遥控抢占或软件急停中止
     ERR_APPROACH_FAILED = 910       # 导航到覆盖起点失败
+    ERR_UNSAFE_NAV_PATH = 911
 
     WAIT_DONE = "done"
     WAIT_TIMEOUT = "timeout"
@@ -84,8 +88,10 @@ class CoverageNavPathBridge(Node):
         self.declare_parameter("follow_timeout_sec", 3600.0)
         self.declare_parameter("dependency_timeout_sec", 5.0)
         self.declare_parameter("enable_lifecycle_checks", True)
-        self.declare_parameter("trim_path_to_robot", True)
+        self.declare_parameter("trim_path_to_robot", False)
         self.declare_parameter("base_frame_id", "base_link")
+        self.declare_parameter("validate_path_costmap", True)
+        self.declare_parameter("path_valid_service", "/is_path_valid")
         # 阿克曼车掉头需要地头空间（同 coverage_params.yaml 的 default_headland_width）
         self.declare_parameter("generate_headland", True)
         self.declare_parameter("generate_route", True)
@@ -194,6 +200,10 @@ class CoverageNavPathBridge(Node):
             self,
             NavigateToPose,
             self._navigate_to_pose_action_name,
+            callback_group=self._callback_group,
+        )
+        self._path_valid_client = self.create_client(
+            IsPathValid, str(self.get_parameter("path_valid_service").value),
             callback_group=self._callback_group,
         )
         self._action_server = ActionServer(
@@ -478,7 +488,11 @@ class CoverageNavPathBridge(Node):
 
             # 先把车导航到覆盖路径的起点（否则 MPPI 因路径落在 local costmap
             # 窗口外而报 "Resulting plan has 0 poses" 并 abort）
+            if not self._validate_nav_path(compute_result.nav_path, goal_handle, result):
+                return result
             if not self._approach_start(compute_result.nav_path, goal_handle, result):
+                return result
+            if not self._validate_nav_path(compute_result.nav_path, goal_handle, result):
                 return result
 
             follow_goal = FollowPath.Goal()
@@ -734,14 +748,23 @@ class CoverageNavPathBridge(Node):
     ) -> list[tuple[float, float]]:
         cleaned = []
         for point in points:
+            if not all(math.isfinite(value) for value in point):
+                raise ValueError(f"{source_name} contains non-finite coordinates.")
             if not cleaned or cleaned[-1] != point:
                 cleaned.append(point)
 
-        if len(cleaned) < 3:
+        if len(set(cleaned)) < 3:
             raise ValueError(f"{source_name} needs at least 3 distinct points.")
 
         if cleaned[0] != cleaned[-1]:
             cleaned.append(cleaned[0])
+        ring = ogr.Geometry(ogr.wkbLinearRing)
+        for x, y in cleaned:
+            ring.AddPoint_2D(x, y)
+        polygon = ogr.Geometry(ogr.wkbPolygon)
+        polygon.AddGeometry(ring)
+        if not polygon.IsValid() or polygon.GetArea() <= 1e-8:
+            raise ValueError(f"{source_name} is self-intersecting or has zero area.")
         return cleaned
 
     def _build_compute_goal(
@@ -764,51 +787,50 @@ class CoverageNavPathBridge(Node):
             goal.polygons.append(coords)
         return goal
 
+    def _validate_nav_path(self, nav_path: NavPathMsg, goal_handle, result) -> bool:
+        if not self.get_parameter("validate_path_costmap").value:
+            return True
+        request = IsPathValid.Request()
+        request.path = nav_path
+        deadline = time.monotonic() + self._dependency_timeout_sec
+        while not self._path_valid_client.service_is_ready():
+            if self._abort_result_if_safety(goal_handle, result):
+                return False
+            if goal_handle.is_cancel_requested:
+                result.error_code = self.ERR_CANCELED
+                goal_handle.canceled()
+                return False
+            if time.monotonic() >= deadline:
+                self.get_logger().error("Path validation service is unavailable; refusing execution.")
+                result.error_code = self.ERR_UNSAFE_NAV_PATH
+                goal_handle.abort()
+                return False
+            time.sleep(0.05)
+        future = self._path_valid_client.call_async(request)
+        status = self._wait_future(future, self._dependency_timeout_sec, goal_handle)
+        if status == self.WAIT_ABORTED:
+            self._abort_result_if_safety(goal_handle, result)
+            return False
+        if status == self.WAIT_CANCELED:
+            result.error_code = self.ERR_CANCELED
+            goal_handle.canceled()
+            return False
+        response = future.result() if status == self.WAIT_DONE else None
+        if response is None or not response.is_valid:
+            indices = list(response.invalid_pose_indices[:10]) if response is not None else []
+            self.get_logger().error(
+                f"Coverage path failed current costmap validation: invalid poses={indices}")
+            result.error_code = self.ERR_UNSAFE_NAV_PATH
+            goal_handle.abort()
+            return False
+        return True
+
     def _trim_path_for_follow(self, nav_path: NavPathMsg) -> NavPathMsg:
-        if len(nav_path.poses) == 0:
-            return nav_path
-
-        frame_id = nav_path.header.frame_id or nav_path.poses[0].header.frame_id
-        if not frame_id:
-            self.get_logger().warn("nav_path frame_id is empty, skipping trim.")
-            return nav_path
-
-        try:
-            transform = self._tf_buffer.lookup_transform(
-                frame_id, self._base_frame_id, rclpy.time.Time()
-            )
-        except Exception as exc:  # pylint: disable=broad-except
-            self.get_logger().warn(
-                f"TF lookup failed for path trimming ({self._base_frame_id}->{frame_id}): {exc}"
-            )
-            return nav_path
-
-        robot_x = float(transform.transform.translation.x)
-        robot_y = float(transform.transform.translation.y)
-
-        nearest_idx = 0
-        nearest_dist_sq = float("inf")
-        for idx, pose_stamped in enumerate(nav_path.poses):
-            dx = float(pose_stamped.pose.position.x) - robot_x
-            dy = float(pose_stamped.pose.position.y) - robot_y
-            dist_sq = dx * dx + dy * dy
-            if dist_sq < nearest_dist_sq:
-                nearest_dist_sq = dist_sq
-                nearest_idx = idx
-
-        if nearest_idx == 0:
-            return nav_path
-
-        trimmed = NavPathMsg()
-        trimmed.header = nav_path.header
-        trimmed.poses = nav_path.poses[nearest_idx:]
-        self.get_logger().info(
-            "Trimmed nav_path for FollowPath: "
-            f"original={len(nav_path.poses)}, "
-            f"nearest_idx={nearest_idx}, "
-            f"sent={len(trimmed.poses)}"
+        # Spatial proximity is not coverage progress: turns revisit earlier locations.
+        self.get_logger().warn(
+            "trim_path_to_robot is deprecated; preserving the complete coverage path."
         )
-        return trimmed if trimmed.poses else nav_path
+        return nav_path
 
     def _robot_pose_in(self, frame_id: str):
         """取 base_frame 在指定坐标系下的 (x, y, yaw)；失败返回 None。"""
@@ -837,18 +859,21 @@ class CoverageNavPathBridge(Node):
         if not self._navigate_to_start or len(nav_path.poses) == 0:
             return True
 
-        target = nav_path.poses[0]
+        target = deepcopy(nav_path.poses[0])
         frame_id = (
             nav_path.header.frame_id
             or target.header.frame_id
             or self._default_frame_id
         )
+        target.header.frame_id = frame_id
+        target.header.stamp = self.get_clock().now().to_msg()
 
         robot = self._robot_pose_in(frame_id)
         if robot is None:
-            # 拿不到位姿就不挡路，让后续 FollowPath 自己去报错更明确
-            self.get_logger().warn("Approach skipped: robot pose unavailable via TF.")
-            return True
+            self.get_logger().error("Approach failed: robot pose unavailable via TF.")
+            result.error_code = self.ERR_APPROACH_FAILED
+            goal_handle.abort()
+            return False
 
         rx, ry, ryaw = robot
         tx = float(target.pose.position.x)
@@ -891,9 +916,19 @@ class CoverageNavPathBridge(Node):
             send_future, self._server_wait_timeout_sec, goal_handle
         )
         if wait_status == self.WAIT_ABORTED:
+            send_future.add_done_callback(
+                lambda future: self._cancel_goal(future.result()))
             self._abort_result_if_safety(goal_handle, result)
             return False
+        if wait_status == self.WAIT_CANCELED:
+            send_future.add_done_callback(
+                lambda future: self._cancel_goal(future.result()))
+            result.error_code = self.ERR_CANCELED
+            goal_handle.canceled()
+            return False
         if wait_status != self.WAIT_DONE:
+            send_future.add_done_callback(
+                lambda future: self._cancel_goal(future.result()))
             self.get_logger().error("Timed out waiting for NavigateToPose goal response.")
             result.error_code = self.ERR_APPROACH_FAILED
             goal_handle.abort()
@@ -915,6 +950,10 @@ class CoverageNavPathBridge(Node):
         )
         if wait_status == self.WAIT_ABORTED:
             self._abort_result_if_safety(goal_handle, result)
+            return False
+        if wait_status == self.WAIT_CANCELED:
+            result.error_code = self.ERR_CANCELED
+            goal_handle.canceled()
             return False
         if wait_status != self.WAIT_DONE:
             self._cancel_goal(nav_handle)
@@ -984,9 +1023,6 @@ class CoverageNavPathBridge(Node):
     ) -> str:
         start_time = time.monotonic()
         while rclpy.ok():
-            if future.done():
-                return self.WAIT_DONE
-
             # 安全中止优先于一切（遥控抢占 / 软件急停）。
             # 置位后取消内层 goal 并返回 WAIT_ABORTED，由 _finish_wait_failure 收尾。
             with self._safety_abort_lock:
@@ -1000,6 +1036,9 @@ class CoverageNavPathBridge(Node):
                 if cancel_fn is not None:
                     cancel_fn()
                 return self.WAIT_CANCELED
+
+            if future.done():
+                return self.WAIT_DONE
 
             if timeout_sec > 0.0 and (time.monotonic() - start_time) >= timeout_sec:
                 if cancel_fn is not None:
