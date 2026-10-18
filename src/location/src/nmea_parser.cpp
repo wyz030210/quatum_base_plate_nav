@@ -45,7 +45,12 @@ bool NMEAParser::parseGGA(const std::string& sentence, RTKData& data) {
         // 定位质量
         if (isFieldValid(fields[6])) {
             data.fix_quality = std::stoi(fields[6]);
-            data.data_valid = (data.fix_quality > 0);
+            data.data_valid = (data.fix_quality > 0) &&
+                isFieldValid(fields[2]) && isFieldValid(fields[3]) &&
+                isFieldValid(fields[4]) && isFieldValid(fields[5]);
+        } else {
+            data.fix_quality = 0;
+            data.data_valid = false;
         }                                              //1=GPS, 2=DGPS, 4=RTK固定, 5=RTK浮点
         
         // 卫星数量
@@ -83,7 +88,11 @@ bool NMEAParser::parseRMC(const std::string& sentence, RTKData& data) {
         
         // 状态
         if (isFieldValid(fields[2])) {
-            data.data_valid = (fields[2] == "A");
+            data.data_valid = (fields[2] == "A") &&
+                isFieldValid(fields[3]) && isFieldValid(fields[4]) &&
+                isFieldValid(fields[5]) && isFieldValid(fields[6]);
+        } else {
+            data.data_valid = false;
         }
         
         // 纬度
@@ -140,6 +149,8 @@ bool NMEAParser::parseHDT(const std::string& sentence, RTKData& data) {
 
 // 更新 RTK 状态文本
 void NMEAParser::updateRTKStatus(RTKData& data) {
+    data.is_rtk_fixed = false;
+    data.is_rtk_float = false;
     switch (data.fix_quality) {
         case 4:
             data.is_rtk_fixed = true;

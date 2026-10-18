@@ -1,3 +1,5 @@
+#不用底盘，单独调试全覆盖
+
 #!/usr/bin/env bash
 set -e
 

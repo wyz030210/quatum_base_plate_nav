@@ -7,6 +7,11 @@
 #include <cstring>                          //memset/strerror
 #include "iostream"                         //cout/cerr
 #include <system_error>                     //错误码
+#include <poll.h>
+
+namespace {
+constexpr std::chrono::milliseconds position_timeout(1000);
+}
 
 //构造/析构
 SerialReader::SerialReader() 
@@ -43,6 +48,7 @@ bool SerialReader::connectSerial() {
         return false;
     }
     
+    remaining_data_.clear();
     connected_ = true;
     std::cout << "Connected to " << port_ << " at " << baudrate_ << " baud" << std::endl;
     return true;
@@ -50,12 +56,15 @@ bool SerialReader::connectSerial() {
 
 //关闭串口 fd 重置状态 等——多次调用安全
 void SerialReader::disconnectSerial() {
-    if (connected_) {
+    connected_ = false;
+    if (serial_fd_ >= 0) {
         close(serial_fd_);
         serial_fd_ = -1;
-        connected_ = false;
         std::cout << "Disconnected from " << port_ << std::endl;
     }
+    remaining_data_.clear();
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    current_data_.data_valid = false;
 }
 
 //配置 Linux 串口的全部参数
@@ -122,8 +131,7 @@ void SerialReader::startReading() {
     }
     
     if (!connected_ && !connectSerial()) {
-        std::cerr << "Failed to connect to serial port" << std::endl;
-        return;
+        std::cerr << "Serial port unavailable; retrying in the background" << std::endl;
     }
     
     running_ = true;
@@ -143,13 +151,17 @@ void SerialReader::stopReading() {
 
 // 读取线程主循环
 void SerialReader::readingThread() {
-    std::string buffer;
+    auto next_reconnect = std::chrono::steady_clock::now();
     
     while (running_) {
         if (!connected_) {
-            std::this_thread::sleep_for(
-                std::chrono::milliseconds(RTKConfig::RECONNECT_INTERVAL_MS));
-            connectSerial();
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= next_reconnect) {
+                connectSerial();
+                next_reconnect = now +
+                    std::chrono::milliseconds(RTKConfig::RECONNECT_INTERVAL_MS);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }                                                            //如果串口断开了，先等 5 秒（RECONNECT_INTERVAL_MS）再重连
         
@@ -168,22 +180,33 @@ void SerialReader::readingThread() {
 std::vector<std::string> SerialReader::readSerialData() {
     std::vector<std::string> sentences;
     if (!connected_) return sentences;
+
+    pollfd descriptor{serial_fd_, POLLIN, 0};
+    const int ready = poll(&descriptor, 1, 0);
+    if (ready < 0) {
+        if (errno != EINTR) disconnectSerial();
+        return sentences;
+    }
+    if (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+        disconnectSerial();
+        return sentences;
+    }
+    if (!(descriptor.revents & POLLIN)) return sentences;
     
     char buffer[256];
     int bytes_read = read(serial_fd_, buffer, sizeof(buffer) - 1);
     
     if (bytes_read > 0) {
         buffer[bytes_read] = '\0';
-        static std::string remaining_data;                          //静态变量，跨调用保持
-        
-        std::string data = remaining_data + std::string(buffer);    //拼接上次剩余的 + 新数据
-        remaining_data.clear();
+        std::string data = remaining_data_ + std::string(buffer, bytes_read);
+        remaining_data_.clear();
         
         size_t start = 0;
         while (true) {
             size_t end = data.find('\n', start);                    //按换行符分割
             if (end == std::string::npos) {                         //没找到→剩下的是不完整行
-                remaining_data = data.substr(start);                //存到下次处理
+                remaining_data_ = data.substr(start);
+                if (remaining_data_.size() > 4096) remaining_data_.clear();
                 break;
             }
             
@@ -200,7 +223,7 @@ std::vector<std::string> SerialReader::readSerialData() {
             start = end + 1;
         }
     } else if (bytes_read < 0) {
-        if (errno != EAGAIN && errno != EWOULDBLOCK) {              //真正的错误
+        if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
             std::cerr << "Serial read error: " << strerror(errno) << std::endl;
             disconnectSerial();
         }
@@ -213,22 +236,33 @@ std::vector<std::string> SerialReader::readSerialData() {
 void SerialReader::processNMEASentence(const std::string& sentence) {
     total_messages_++;
     
-    RTKData new_data = current_data_;                              //先把 current_data_ 复制到 new_data
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    RTKData new_data = current_data_;
     
     if (NMEAParser::parseSentence(sentence, new_data)) {           //调用 parseSentence，只更新 new_data 中当前语句涉及的字段
         valid_messages_++;
         
-        std::lock_guard<std::mutex> lock(data_mutex_);             //如果解析成功，加锁写回 current_data_
         current_data_ = new_data;
-        current_data_.timestamp = std::chrono::system_clock::now();
-        last_update_ = current_data_.timestamp;
+        // Heading traffic must not make an old position look current.
+        if (sentence.compare(3, 3, "GGA") == 0 || sentence.compare(3, 3, "RMC") == 0) {
+            current_data_.timestamp = std::chrono::system_clock::now();
+            last_position_update_ = std::chrono::steady_clock::now();
+        }
     }
 }
 
 //加锁返回最新数据的副本。car_location.cpp 主循环每次调用都拿一个完整快照。返回的是副本（不是引用），安全
 RTKData SerialReader::getLatestData() {
     std::lock_guard<std::mutex> lock(data_mutex_);
-    return current_data_;
+    RTKData snapshot = current_data_;
+    if (!connected_ || last_position_update_ == std::chrono::steady_clock::time_point{} ||
+        std::chrono::steady_clock::now() - last_position_update_ > position_timeout) {
+        snapshot.data_valid = false;
+        snapshot.is_rtk_fixed = false;
+        snapshot.is_rtk_float = false;
+        snapshot.rtk_status = connected_ ? "NO DATA" : "DISCONNECTED";
+    }
+    return snapshot;
 }
 
 bool SerialReader::isConnected() const {
@@ -236,14 +270,11 @@ bool SerialReader::isConnected() const {
 }
 
 std::string SerialReader::getStatus() const {
-    auto now = std::chrono::system_clock::now();
-    auto diff = std::chrono::duration_cast<std::chrono::seconds>(now - last_update_);
-    
-    if (diff.count() > 5) {
-        return "NO DATA";                                          //超过5秒没数据
-    }
-    
     std::lock_guard<std::mutex> lock(data_mutex_);
+    if (!connected_ || last_position_update_ == std::chrono::steady_clock::time_point{} ||
+        std::chrono::steady_clock::now() - last_position_update_ > position_timeout) {
+        return "NO DATA";
+    }
     if (!current_data_.data_valid) {
         return "INVALID";                                          //有数据，但 fix_quality=0                  
     }

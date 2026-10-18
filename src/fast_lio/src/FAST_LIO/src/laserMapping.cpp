@@ -37,6 +37,7 @@
 #include <math.h>
 #include <thread>
 #include <fstream>
+#include <filesystem>
 #include <csignal>
 #include <chrono>
 #include <unistd.h>
@@ -61,6 +62,7 @@
 #include <geometry_msgs/msg/vector3.hpp>
 #include <livox_ros_driver2/msg/custom_msg.hpp>
 #include "preprocess.h"
+#include "pcd_io.hpp"
 #include <ikd-Tree/ikd_Tree.h>
 
 #define INIT_TIME           (0.1)
@@ -87,6 +89,7 @@ condition_variable sig_buffer;
 
 string root_dir = ROOT_DIR;
 string map_file_path, lid_topic, imu_topic;
+string pcd_save_directory = root_dir + "PCD";
 string odom_frame_id = "odom", body_frame_id = "base_link";
 
 double res_mean_last = 0.05, total_residual = 0.0;
@@ -534,10 +537,17 @@ void publish_frame_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Share
         if (pcl_wait_save->size() > 0 && pcd_save_interval > 0  && scan_wait_num >= pcd_save_interval)
         {
             pcd_index ++;
-            string all_points_dir(string(string(ROOT_DIR) + "PCD/scans_") + to_string(pcd_index) + string(".pcd"));
-            pcl::PCDWriter pcd_writer;
-            cout << "current scan saved to /PCD/" << all_points_dir << endl;
-            pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+            const string all_points_dir = (std::filesystem::path(pcd_save_directory) /
+                ("scans_" + to_string(pcd_index) + ".pcd")).string();
+            string error;
+            if (fast_lio::writePcdBinary(all_points_dir, *pcl_wait_save, error)) {
+                RCLCPP_INFO(rclcpp::get_logger("laser_mapping"),
+                    "Saved scan to %s", all_points_dir.c_str());
+            } else {
+                RCLCPP_ERROR(rclcpp::get_logger("laser_mapping"),
+                    "Failed to save PCD '%s': %s", all_points_dir.c_str(), error.c_str());
+            }
+            // Release each batch even if storage is unavailable.
             pcl_wait_save->clear();
             scan_wait_num = 0;
         }
@@ -618,10 +628,9 @@ void publish_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub
     // pubLaserCloudMap->publish(laserCloudMap);
 }
 
-void save_to_pcd()
+bool save_to_pcd(string & error)
 {
-    pcl::PCDWriter pcd_writer;
-    pcd_writer.writeBinary(map_file_path, *pcl_wait_pub);
+    return fast_lio::writePcdBinary(map_file_path, *pcl_wait_pub, error);
 }
 
 template<typename T>
@@ -849,6 +858,7 @@ public:
         this->declare_parameter<bool>("mapping.extrinsic_est_en", true);
         this->declare_parameter<bool>("pcd_save.pcd_save_en", true);
         this->declare_parameter<int>("pcd_save.interval", 500);
+        this->declare_parameter<string>("pcd_save.directory", pcd_save_directory);
         this->declare_parameter<vector<double>>("mapping.extrinsic_T", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_R", vector<double>());
 
@@ -888,6 +898,7 @@ public:
         this->get_parameter_or<bool>("mapping.extrinsic_est_en", extrinsic_est_en, true);
         this->get_parameter_or<bool>("pcd_save.pcd_save_en", pcd_save_en, true);
         this->get_parameter_or<int>("pcd_save.interval", pcd_save_interval, 500);
+        this->get_parameter_or<string>("pcd_save.directory", pcd_save_directory, root_dir + "PCD");
         this->get_parameter_or<vector<double>>("mapping.extrinsic_T", extrinT, vector<double>());
         this->get_parameter_or<vector<double>>("mapping.extrinsic_R", extrinR, vector<double>());
 
@@ -927,6 +938,13 @@ public:
         /*** debug record ***/
         // FILE *fp;
         string pos_log_dir = root_dir + "/Log/pos_log.txt";
+        std::error_code log_directory_error;
+        std::filesystem::create_directories(
+            std::filesystem::path(pos_log_dir).parent_path(), log_directory_error);
+        if (log_directory_error) {
+            RCLCPP_WARN(this->get_logger(), "Cannot create debug log directory: %s",
+                log_directory_error.message().c_str());
+        }
         fp = fopen(pos_log_dir.c_str(),"w");
 
         // ofstream fout_pre, fout_out, fout_dbg;
@@ -973,7 +991,7 @@ public:
     {
         fout_out.close();
         fout_pre.close();
-        fclose(fp);
+        if (fp) fclose(fp);
     }
 
 private:
@@ -1125,7 +1143,7 @@ private:
                 ext_euler = SO3ToEuler(state_point.offset_R_L_I);
                 fout_out << setw(20) << Measures.lidar_beg_time - first_lidar_time << " " << euler_cur.transpose() << " " << state_point.pos.transpose()<< " " << ext_euler.transpose() << " "<<state_point.offset_T_L_I.transpose()<<" "<< state_point.vel.transpose() \
                 <<" "<<state_point.bg.transpose()<<" "<<state_point.ba.transpose()<<" "<<state_point.grav<<" "<<feats_undistort->points.size()<<endl;
-                dump_lio_state_to_log(fp);
+                if (fp) dump_lio_state_to_log(fp);
             }
         }
     }
@@ -1140,9 +1158,9 @@ private:
         RCLCPP_INFO(this->get_logger(), "Saving map to %s...", map_file_path.c_str());
         if (pcd_save_en)
         {
-            save_to_pcd();
-            res->success = true;
-            res->message = "Map saved.";
+            string error;
+            res->success = save_to_pcd(error);
+            res->message = res->success ? "Map saved." : error;
         }
         else
         {
@@ -1174,7 +1192,7 @@ private:
     bool flg_EKF_converged, EKF_stop_flg = 0;
     double epsi[23] = {0.001};
 
-    FILE *fp;
+    FILE *fp = nullptr;
     ofstream fout_pre, fout_out, fout_dbg;
 };
 
@@ -1194,10 +1212,13 @@ int main(int argc, char** argv)
     if (pcl_wait_save->size() > 0 && pcd_save_en)
     {
         string file_name = string("scans.pcd");
-        string all_points_dir(string(string(ROOT_DIR) + "PCD/") + file_name);
-        pcl::PCDWriter pcd_writer;
-        cout << "current scan saved to /PCD/" << file_name<<endl;
-        pcd_writer.writeBinary(all_points_dir, *pcl_wait_save);
+        const string all_points_dir =
+            (std::filesystem::path(pcd_save_directory) / file_name).string();
+        string error;
+        if (!fast_lio::writePcdBinary(all_points_dir, *pcl_wait_save, error)) {
+            RCLCPP_ERROR(rclcpp::get_logger("laser_mapping"),
+                "Failed to save final PCD '%s': %s", all_points_dir.c_str(), error.c_str());
+        }
     }
 
     if (runtime_pos_log)
@@ -1206,6 +1227,11 @@ int main(int argc, char** argv)
         FILE *fp2;
         string log_dir = root_dir + "/Log/fast_lio_time_log.csv";
         fp2 = fopen(log_dir.c_str(),"w");
+        if (!fp2) {
+            RCLCPP_WARN(rclcpp::get_logger("laser_mapping"),
+                "Cannot write timing log '%s'", log_dir.c_str());
+            return 0;
+        }
         fprintf(fp2,"time_stamp, total time, scan point size, incremental time, search time, delete size, delete time, tree size st, tree size end, add point size, preprocess time\n");
         for (int i = 0;i<time_log_counter; i++){
             fprintf(fp2,"%0.8f,%0.8f,%d,%0.8f,%0.8f,%d,%0.8f,%d,%d,%d,%0.8f\n",T1[i],s_plot[i],int(s_plot2[i]),s_plot3[i],s_plot4[i],int(s_plot5[i]),s_plot6[i],int(s_plot7[i]),int(s_plot8[i]), int(s_plot10[i]), s_plot11[i]);

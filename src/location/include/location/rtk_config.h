@@ -9,7 +9,9 @@
 //命名空间
 namespace RTKConfig {
     // 串口配置(编译时确定默认值，运行时可以通过 launch 参数覆盖，不需要改代码重新编译)
-    const std::string DEFAULT_PORT = "/dev/ttyUSB0";
+    const std::string DEFAULT_PORT =
+        "/dev/serial/by-id/"
+        "usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0";
     const int DEFAULT_BAUDRATE = 115200;
     
     // 超时设置（毫秒）

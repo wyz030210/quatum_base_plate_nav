@@ -95,8 +95,8 @@ def test_indoor_planner_and_controller_support_ackermann_reversing():
     )
 
     assert 'motion_model_for_search: "REEDS_SHEPP"' in params
-    assert "minimum_turning_radius: 0.52" in params
-    assert "min_turning_r: 0.52" in params
+    assert "minimum_turning_radius: 0.95" in params
+    assert "min_turning_r: 0.95" in params
     assert "enforce_path_inversion: true" in params
 
 

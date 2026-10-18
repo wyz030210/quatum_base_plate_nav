@@ -70,7 +70,8 @@ def generate_launch_description():
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument("use_rviz", default_value="false"),
             DeclareLaunchArgument("autostart", default_value="true"),
-            DeclareLaunchArgument("use_composition", default_value="True"),
+            # Humble's shared-context lifecycle shutdown can deadlock in the initial TF wait.
+            DeclareLaunchArgument("use_composition", default_value="False"),
             DeclareLaunchArgument("use_respawn", default_value="False"),
             DeclareLaunchArgument("log_level", default_value="info"),
             DeclareLaunchArgument("max_forward_speed", default_value="0.25"),

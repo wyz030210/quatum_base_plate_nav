@@ -72,6 +72,7 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     use_rviz = LaunchConfiguration("use_rviz")
     use_coverage = LaunchConfiguration("use_coverage")
+    use_composition = LaunchConfiguration("use_composition")
     can_serial_port = LaunchConfiguration("can_serial_port")
     max_forward_speed = LaunchConfiguration("max_forward_speed")
     max_reverse_speed = LaunchConfiguration("max_reverse_speed")
@@ -144,6 +145,7 @@ def generate_launch_description():
             "use_sim_time": use_sim_time,
             "use_rviz": use_rviz,
             "use_coverage": use_coverage,
+            "use_composition": use_composition,
             "max_forward_speed": max_forward_speed,
             "max_reverse_speed": max_reverse_speed,
             "max_yaw_rate": max_yaw_rate,
@@ -162,10 +164,21 @@ def generate_launch_description():
         [
             DeclareLaunchArgument(
                 "map",
+                default_value=PathJoinSubstitution(
+                    [FindPackageShare("wheeltec_nav2"), "map", "indoor_map.yaml"]
+                ),
                 description="Absolute path to the indoor map YAML",
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
-            DeclareLaunchArgument("use_rviz", default_value="false"),
+            DeclareLaunchArgument("use_rviz", default_value="true"),
+            DeclareLaunchArgument(
+                "use_composition",
+                default_value="False",
+                description=(
+                    "Use a shared Nav2 component container. Separate processes avoid "
+                    "Humble lifecycle shutdown deadlocks while waiting for initial TF."
+                ),
+            ),
             DeclareLaunchArgument(
                 "use_coverage",
                 default_value="false",

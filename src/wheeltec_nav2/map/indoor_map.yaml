@@ -1,4 +1,4 @@
-image: map.pgm
+image: indoor_map.pgm
 mode: trinary
 resolution: 0.12
 origin: [-25, -20.2, 0]

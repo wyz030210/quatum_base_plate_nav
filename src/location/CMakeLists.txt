@@ -75,4 +75,13 @@ install(TARGETS rtk_localization_node
 install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}/
 )
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_rtk_data test/test_rtk_data.cpp
+    src/nmea_parser.cpp src/serial_reader.cpp)
+  target_include_directories(test_rtk_data PRIVATE include)
+  ament_target_dependencies(test_rtk_data rclcpp)
+  target_link_libraries(test_rtk_data util)
+endif()
+
 ament_package()

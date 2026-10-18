@@ -23,7 +23,7 @@ public:
     
     RTKData getLatestData();         //获取最新的 RTK 数据快照
     bool isConnected() const;        // 返回 connected_（串口是否处于打开状态）
-    std::string getStatus() const;   //返回状态文字："NO DATA"（5秒无更新）、"INVALID"（fix_quality=0）、"RTK FIXED"、"RTK FLOAT" 等
+    std::string getStatus() const;   // "NO DATA" after one second without position updates.
     
 private:
     void readingThread();            //后台线程的主函数。无限循环
@@ -52,7 +52,8 @@ private:
     // 统计信息
     uint64_t total_messages_;        //收到的 NMEA 语句总数
     uint64_t valid_messages_;        //校验通过的有效语句数
-    std::chrono::system_clock::time_point last_update_;     //最后一次数据更新时间
+    std::chrono::steady_clock::time_point last_position_update_{};
+    std::string remaining_data_;
 };
 
 #endif

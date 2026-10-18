@@ -1,4 +1,4 @@
-image: fastlio_map.pgm
+image: outdoor_map.pgm
 mode: trinary
 resolution: 0.12
 origin: [-43.3, -34.3, 0]

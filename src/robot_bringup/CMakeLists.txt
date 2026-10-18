@@ -13,6 +13,7 @@ install(
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_pytest_test(test_indoor_launch test/test_indoor_launch.py)
+  ament_add_pytest_test(test_outdoor_launch test/test_outdoor_launch.py)
 endif()
 
 ament_package()

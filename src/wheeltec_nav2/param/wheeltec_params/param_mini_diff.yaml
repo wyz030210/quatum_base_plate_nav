@@ -100,8 +100,8 @@ controller_server:
       wz_std: 0.5       
       # vx_max: 1.2       
       # vx_min: -0.4 
-      vx_max: 2.0
-      vx_min: -1.0     
+      vx_max: 0.25
+      vx_min: -0.1     
       vy_max: 0.0       
       wz_max: 2.0       
       ax_max: 2.0       
@@ -126,8 +126,7 @@ controller_server:
       regenerate_noises: true
       open_loop: false
       AckermannConstraints:
-        # min_turning_r: 0.25 
-        min_turning_r: 0.5
+        min_turning_r: 0.95
       critics: ["ConstraintCritic", "ObstaclesCritic", "GoalCritic", "GoalAngleCritic", "PathAlignCritic", "PathFollowCritic", "PathAngleCritic", "PreferForwardCritic"]
       ConstraintCritic:
         enabled: true
@@ -308,6 +307,7 @@ planner_server:
       max_iterations: 1000000
       max_on_approach_iterations: 1000
       max_planning_time: 10.0
+      # "DUBIN"：只规划前进
       motion_model_for_search: "DUBIN"
       cost_travel_multiplier: 2.0
       angle_quantization_bins: 72

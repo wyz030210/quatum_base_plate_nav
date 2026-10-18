@@ -1,3 +1,4 @@
+# 在原参数基础上，为室内定位、低速行驶和更精确停车调整的
 amcl:
   ros__parameters:
     use_sim_time: false
@@ -312,6 +313,7 @@ planner_server:
       max_iterations: 1000000
       max_on_approach_iterations: 1000
       max_planning_time: 10.0
+      # "REEDS_SHEPP"：允许倒车
       motion_model_for_search: "REEDS_SHEPP"
       cost_travel_multiplier: 2.0
       angle_quantization_bins: 72

@@ -121,4 +121,11 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_pcd_io test/test_pcd_io.cpp)
+  target_include_directories(test_pcd_io PRIVATE include ${PCL_INCLUDE_DIRS})
+  target_link_libraries(test_pcd_io ${PCL_LIBRARIES} Eigen3::Eigen)
+endif()
+
 ament_package()

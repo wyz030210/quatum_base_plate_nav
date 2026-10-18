@@ -3,12 +3,12 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, GroupAction,                           
                             IncludeLaunchDescription, SetEnvironmentVariable)
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
-from launch_ros.actions import Node
+from launch_ros.actions import LoadComposableNodes, Node
 from launch_ros.actions import PushRosNamespace
-from launch_ros.descriptions import ParameterFile
+from launch_ros.descriptions import ComposableNode, ParameterFile
 from nav2_common.launch import RewrittenYaml, ReplaceString
 
 
@@ -28,6 +28,9 @@ def generate_launch_description():
     params_file = LaunchConfiguration('params_file')
     coverage_params_file = LaunchConfiguration('coverage_params_file')
     use_coverage = LaunchConfiguration('use_coverage')
+    use_coverage_server = LaunchConfiguration('use_coverage_server')
+    use_amcl = LaunchConfiguration('use_amcl')
+    task_file = LaunchConfiguration('task_file')
     autostart = LaunchConfiguration('autostart')
     use_composition = LaunchConfiguration('use_composition')
     use_respawn = LaunchConfiguration('use_respawn')
@@ -115,6 +118,16 @@ def generate_launch_description():
                     '(coverage action bridge + RViz region selector). '
                     'Default false for ordinary indoor navigation.')
 
+    declare_use_amcl_cmd = DeclareLaunchArgument(
+        'use_amcl', default_value='true',
+        description='Disable when an external global EKF supplies map -> odom')
+    declare_use_coverage_server_cmd = DeclareLaunchArgument(
+        'use_coverage_server', default_value='true',
+        description='Keep legacy indoor behavior; outdoor follows use_coverage')
+    declare_task_file_cmd = DeclareLaunchArgument(
+        'task_file', default_value=os.path.join(
+            get_package_share_directory('nav2_mission'), 'config', 'coverage_navpath_task.yaml'))
+
     declare_autostart_cmd = DeclareLaunchArgument(
         'autostart', default_value='true',
         description='Automatically startup the nav2 stack')
@@ -170,7 +183,9 @@ def generate_launch_description():
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(launch_dir,
                                                        'localization_launch.py')),
-            condition=IfCondition(PythonExpression(['not ', slam])),
+            condition=IfCondition(PythonExpression([
+                "'", slam, "'.lower() not in ('true', '1') and '",
+                use_amcl, "'.lower() in ('true', '1')"])),
             launch_arguments={'namespace': namespace,
                               'map': map_yaml_file,
                               'use_sim_time': use_sim_time,
@@ -179,6 +194,41 @@ def generate_launch_description():
                               'use_composition': use_composition,
                               'use_respawn': use_respawn,
                               'container_name': 'nav2_container'}.items()),
+
+        # The RTK EKF owns map -> odom. Load only the map, not a second localizer.
+        GroupAction(
+            condition=IfCondition(PythonExpression([
+                "'", slam, "'.lower() not in ('true', '1') and '",
+                use_amcl, "'.lower() not in ('true', '1')"])),
+            actions=[
+                Node(
+                    condition=UnlessCondition(use_composition),
+                    package='nav2_map_server', executable='map_server', name='map_server',
+                    output='screen', parameters=[configured_params],
+                    respawn=use_respawn, respawn_delay=2.0, remappings=remappings,
+                    arguments=['--ros-args', '--log-level', log_level]),
+                Node(
+                    condition=UnlessCondition(use_composition),
+                    package='nav2_lifecycle_manager', executable='lifecycle_manager',
+                    name='lifecycle_manager_localization', output='screen',
+                    parameters=[{'use_sim_time': use_sim_time, 'autostart': autostart,
+                                 'node_names': ['map_server']}]),
+                LoadComposableNodes(
+                    condition=IfCondition(use_composition),
+                    target_container=(namespace, '/nav2_container'),
+                    composable_node_descriptions=[
+                        ComposableNode(
+                            package='nav2_map_server', plugin='nav2_map_server::MapServer',
+                            name='map_server', parameters=[configured_params],
+                            remappings=remappings),
+                        ComposableNode(
+                            package='nav2_lifecycle_manager',
+                            plugin='nav2_lifecycle_manager::LifecycleManager',
+                            name='lifecycle_manager_localization',
+                            parameters=[{'use_sim_time': use_sim_time, 'autostart': autostart,
+                                         'node_names': ['map_server']}]),
+                    ]),
+            ]),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
@@ -190,6 +240,8 @@ def generate_launch_description():
                               'params_file': params_file,
                               'coverage_params_file': coverage_params_file,
                               'use_coverage': use_coverage,
+                              'use_coverage_server': use_coverage_server,
+                              'task_file': task_file,
                               'use_composition': use_composition,
                               'use_respawn': use_respawn,
                               'container_name': 'nav2_container',
@@ -216,6 +268,9 @@ def generate_launch_description():
     ld.add_action(declare_params_file_cmd)
     ld.add_action(declare_coverage_params_file_cmd)
     ld.add_action(declare_use_coverage_cmd)
+    ld.add_action(declare_use_amcl_cmd)
+    ld.add_action(declare_use_coverage_server_cmd)
+    ld.add_action(declare_task_file_cmd)
     ld.add_action(declare_autostart_cmd)
     ld.add_action(declare_use_composition_cmd)
     ld.add_action(declare_use_respawn_cmd)

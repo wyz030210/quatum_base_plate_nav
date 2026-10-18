@@ -58,6 +58,7 @@ void displayData(const RTKData& data) {
     std::cout << "Time: " << data.utc_time << " Date: " << data.date << std::endl;
     std::cout << "Status: " << (data.data_valid ? "\033[1;32mVALID\033[0m" : "\033[1;31mINVALID\033[0m") << std::endl;
     std::cout << "Fix: " << data.rtk_status;
+    std::cout << " (GGA quality=" << data.fix_quality << ")";
     
     if (data.is_rtk_fixed) {
         std::cout << " \033[1;32m[PRECISE]\033[0m";
@@ -245,23 +246,21 @@ int main(int argc, char* argv[]) {
     std::cout << "Initializing RTK receiver on " << port << " at " << baudrate << " baud..." << std::endl;
     
     if (!reader.initialize(port, baudrate)) {
-        std::cerr << "Failed to initialize RTK receiver!" << std::endl;
-        rclcpp::shutdown();
-        return -1;
+        std::cerr << "RTK unavailable; waiting for the serial device to reconnect." << std::endl;
     }
     
     reader.startReading();
-    std::cout << "RTK receiver started successfully!" << std::endl;
+    std::cout << "RTK reader started; waiting for fresh position data." << std::endl;
     
     // ====== 主循环 ======
     rclcpp::Rate rate(20);   //20Hz 循环
+    std::chrono::system_clock::time_point last_published{};
     
     while (running && rclcpp::ok()) {
         RTKData data = reader.getLatestData();      //获取最新 RTK 数据
+        displayData(data);
         
         if (data.data_valid) {
-            displayData(data);                      //终端显示
-            
             if (auto_set_origin && !coordinate_converter->isOriginSet()) {
                 coordinate_converter->setOrigin(data.position.latitude,    //自动设原点
                                                data.position.longitude, 
@@ -270,8 +269,11 @@ int main(int argc, char* argv[]) {
                           << ", lon=" << data.position.longitude << std::endl;
             }
             
-            publishNavSatFix(data, node);                                  //发布 /gps/fix
-            publishOdometry(data, node);                                   //发布 /odometry/gps
+            if (data.timestamp != last_published) {
+                publishNavSatFix(data, node);
+                publishOdometry(data, node);
+                last_published = data.timestamp;
+            }
         }
         
         rclcpp::spin_some(node);                                           //处理 ROS 回调和异步事件
@@ -280,6 +282,9 @@ int main(int argc, char* argv[]) {
     
     // ====== 清理退出 ======
     reader.stopReading();                           //停止串口读取线程
+    odom_publisher.reset();
+    navsatfix_publisher.reset();
+    node.reset();
     rclcpp::shutdown();                             //关闭 ROS2
     
     return 0;

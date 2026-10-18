@@ -8,7 +8,7 @@ from launch.actions import (
     IncludeLaunchDescription,
     SetEnvironmentVariable,
 )
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import LoadComposableNodes, Node
@@ -34,6 +34,8 @@ def generate_launch_description():
     params_file = LaunchConfiguration("params_file")
     coverage_params_file = LaunchConfiguration("coverage_params_file")
     use_coverage = LaunchConfiguration("use_coverage")
+    use_coverage_server = LaunchConfiguration("use_coverage_server")
+    task_file = LaunchConfiguration("task_file")
     use_composition = LaunchConfiguration("use_composition")
     container_name = LaunchConfiguration("container_name")
     use_respawn = LaunchConfiguration("use_respawn")
@@ -63,8 +65,13 @@ def generate_launch_description():
         "bt_navigator",
         "waypoint_follower",
         "velocity_smoother",
-        "coverage_server",
     ]
+    lifecycle_nodes = ParameterValue(
+        PythonExpression([
+            repr(lifecycle_nodes), " + (['coverage_server'] if '",
+            use_coverage_server, "'.lower() in ('true', '1') else [])",
+        ]), value_type=List[str],
+    )
 
     param_substitutions = {
         "use_sim_time": use_sim_time,
@@ -122,9 +129,17 @@ def generate_launch_description():
             "(/execute_coverage_navpath) and the RViz region selector (/clicked_point). "
             "Default false: ordinary indoor navigation does not start them. "
             "Set true to run full-coverage missions. "
-            "Note: coverage_server itself is part of the Nav2 lifecycle manager and "
-            "starts regardless of this flag; see doc/Coverage_Porting_Plan.md 4.3.1."
+            "The separate use_coverage_server flag controls the planning service."
         ),
+    )
+    declare_use_coverage_server_cmd = DeclareLaunchArgument(
+        "use_coverage_server", default_value="true",
+        description="Preserve the indoor planning service; outdoor follows use_coverage",
+    )
+    declare_task_file_cmd = DeclareLaunchArgument(
+        "task_file", default_value=PathJoinSubstitution([
+            FindPackageShare("nav2_mission"), "config", "coverage_navpath_task.yaml"
+        ]),
     )
     declare_autostart_cmd = DeclareLaunchArgument(
         "autostart",
@@ -211,7 +226,7 @@ def generate_launch_description():
     }
 
     load_nodes = GroupAction(
-        condition=IfCondition(PythonExpression(["not ", use_composition])),
+        condition=UnlessCondition(use_composition),
         actions=[
             Node(
                 package="nav2_controller",
@@ -283,6 +298,7 @@ def generate_launch_description():
                 package="opennav_coverage",
                 executable="opennav_coverage",
                 name="coverage_server",
+                condition=IfCondition(use_coverage_server),
                 output="screen",
                 respawn=use_respawn,
                 respawn_delay=2.0,
@@ -355,6 +371,7 @@ def generate_launch_description():
                 package="opennav_coverage",
                 plugin="opennav_coverage::CoverageServer",
                 name="coverage_server",
+                condition=IfCondition(use_coverage_server),
                 parameters=[configured_params, configured_coverage_params],
                 remappings=remappings,
             ),
@@ -373,12 +390,7 @@ def generate_launch_description():
         ],
     )
 
-    # ── 按需启动的覆盖触发链（仅 use_coverage:=true 时启动）──────────────
-    # 这两个节点此前【只】出现在 robot_bringup/system.launch.py 与
-    # nav2/launch/nav2_launch.py 里，而这两条 launch 都因引用不存在的
-    # turn_on_wheeltec_robot 而失效 —— 结果是走室内入口时 coverage_server 起来了，
-    # 但 /execute_coverage_navpath action 不存在、RViz 的 /clicked_point 无人监听，
-    # 覆盖功能在整条链上是断的。详见 doc/Coverage_Porting_Plan.md §4.3.1。
+    # Shared by indoor_amcl.launch.py and outdoor_ekf.launch.py; create only once.
     coverage_bridge = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution(
@@ -390,6 +402,7 @@ def generate_launch_description():
             )
         ),
         condition=IfCondition(use_coverage),
+        launch_arguments={"task_file": task_file}.items(),
     )
 
     coverage_selector = IncludeLaunchDescription(
@@ -412,6 +425,8 @@ def generate_launch_description():
     ld.add_action(declare_params_file_cmd)
     ld.add_action(declare_coverage_params_file_cmd)
     ld.add_action(declare_use_coverage_cmd)
+    ld.add_action(declare_use_coverage_server_cmd)
+    ld.add_action(declare_task_file_cmd)
     ld.add_action(declare_autostart_cmd)
     ld.add_action(declare_use_composition_cmd)
     ld.add_action(declare_container_name_cmd)
