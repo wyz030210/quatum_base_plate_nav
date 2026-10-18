@@ -1,0 +1,287 @@
+================================================================================
+  全覆盖作业 · 真实底盘使用方法
+  车辆：阿克曼底盘 / NUC (car-NUC13VYKi5)
+  工作区：/home/car/ros2/new_base_plate_indoor_ws
+  更新：2026-09-26
+================================================================================
+
+【一句话流程】
+
+  1) 发车前检查（遥控器挡位 / 摇杆中位 / 有人持握 / 物理急停在手）
+  2) 带 USE_COVERAGE=true 启动整栈
+  3) RViz 里用 Publish Point 点选多边形（点回起点附近即闭合）
+  4) 调一次服务 → 开始覆盖
+
+
+================================================================================
+  一、发车前检查
+================================================================================
+
+【必须人工确认，脚本无法代劳】
+
+  [ ] 物理急停就在手边，且确认可用
+  [ ] 遥控器【模式切换通道】处于已知挡位 —— 你必须确定它在哪个挡
+  [ ] 遥控器摇杆【在中位】
+  [ ] 有人持握遥控器，全程不松手
+
+  为什么是硬性的：
+   · STM32 一旦收到任意一条 CAN 指令，若 RC 在"自动"挡，就会【静默】把控制权
+     交给 ROS —— 哪怕发的只是一条零速指令。
+   · 500ms 超时会自动退回 RC 手动。此时若摇杆不在中位，车会按摇杆当前位置
+     突然动作。
+
+【自动检查】先启动整栈（见第二节），然后在终端执行：
+
+  ros2 action list | grep execute_coverage_navpath
+      期望：/execute_coverage_navpath
+      没有 → 启动时忘了 USE_COVERAGE=true
+
+  ros2 service list | grep -E "^/(clear|close_and_execute|close_polygon|execute_polygon|undo_last_point)$"
+      期望：5 个都出现
+      ⚠️ 注意这 5 个服务【在根命名空间下，没有节点名前缀】——
+         源码用的是相对名 create_service(Trigger, "close_and_execute")，
+         而 ROS 2 的相对名是相对【命名空间】解析的，不含节点名
+         （与 ROS 1 的 ~private 不同）。
+         所以是 /close_and_execute，不是 /coverage_region_selector/close_and_execute。
+
+  ros2 topic hz /vehicle/remote_manual_override
+      期望：≈ 1 Hz（本机实测 7 Hz 左右也正常）
+      没有 → 软件安全层会失效，先查 CAN 链路再继续
+
+  ros2 param get /cmd_vel_to_can_node max_forward_speed
+      期望：0.4（车上实车调参值）
+      若为 2.0 → 误用了 complete_control.launch.py，立即停止
+
+  ros2 lifecycle get /coverage_server
+      期望：active
+
+  ros2 topic hz /scan                    # 期望 >= 8 Hz
+  ros2 topic hz /odometry/filtered_odom  # 期望 >= 8 Hz
+
+  · 用 2D Pose Estimate 设一次初始位姿，目视【激光与地图墙线基本重合】。
+    不重合就立即停止 —— 覆盖路径是相对地图生成的，定位偏了整条路径都偏。
+
+
+================================================================================
+  二、启动
+================================================================================
+
+  cd /home/car/ros2/new_base_plate_indoor_ws
+  	
+
+  必须带 USE_COVERAGE=true：不带的话，覆盖的两个节点（动作桥接 + 区域选择器）
+  不会启动，RViz 里点选也不会有任何反应。这是按需启动的设计。
+
+
+================================================================================
+  三、RViz 里怎么点选
+================================================================================
+
+  1. 启动时默认就开 RViz（USE_RVIZ 默认 true）。Fixed Frame 设为 map。
+
+  2. 用工具栏的【Publish Point】工具（小圆点图标），在地图上依次点选多边形的
+     各个顶点，【至少 3 个】。
+
+     每点一个，RViz 里会实时看到多边形在长。相关 display 在 map.rviz 里已经
+     配好了，不用自己加：
+         /coverage_ui/markers
+         /coverage_ui/polygon
+
+  3. 点回第一个顶点附近（【0.35 m 以内】）→ 多边形自动闭合。
+
+  4. 闭合后【还要调一次服务】才会真正开始（见第四节）。
+
+  【选点注意】
+   · 以地图上【明确的墙体】为界。地图 free_thresh=0.25，未建图区域也会显示成
+     "自由空间"，不要依赖"空白=可走"。
+   · 【面积不能太小】第一次试跑用【8×8 m 以上】。
+     原因：本车最小转弯半径 0.95 m，掉头需要 1.9 m 空间；而地头宽度设的是
+     1.30 m（为全场 18×14 m 调的）。一个 3×3 m 的区域被地头一内缩就没有
+     核心作业区了，生成的路径会退化成奇怪的形状。
+     经验下限：多边形短边 >= 6 m，建议 8×8 m 起。
+   · 车不必停在多边形旁边 —— 执行时会【自动导航到起点】，见第四节。
+   · 覆盖执行期间点选会被忽略（日志：Coverage is running; point input ignored）。
+   · 多边形闭合后再点，会自动开始画一个新的（旧的被清掉）。
+
+
+================================================================================
+  四、开始覆盖
+================================================================================
+
+  ros2 service call /close_and_execute \
+      std_srvs/srv/Trigger "{}"
+
+  【服务名没有节点名前缀】：是 /close_and_execute，不是
+  /coverage_region_selector/close_and_execute。详见第一节的说明。
+
+  这条等价于仿真侧以前用的：
+      ros2 run property_inspection coverage_cli close-outer
+
+  它会自动补上闭合，所以顶点点完直接调这条即可，第 3 步（点回起点）可以省。
+
+  【执行后的三个阶段，全自动】
+     ① ComputeCoveragePath 计算覆盖路径
+     ② NavigateToPose 把车开到路径起点（approach 阶段，超时 120 s）
+     ③ FollowPath 跟随整条覆盖路径
+
+     ② 是必要的：F2C 生成的路径起点在【多边形边缘】，而车可能离得很远。
+        MPPI 的 local costmap 只有 6×6 m（±3 m），若起点在窗口外，
+        controller_server 会报 "Resulting plan has 0 poses in it" 并 abort。
+        approach 走的是 Nav2 正常导航（全局规划 + 避障），所以会绕开障碍。
+
+     日志会看到：
+        Navigating to coverage start (x, y) in map: distance=... m
+        Reached coverage start; proceeding to FollowPath.
+     若车已经在起点附近（<=0.5 m / 0.5 rad），会直接跳过：
+        Already near coverage start ...; skipping approach.
+
+  相关参数（在 coverage_navpath_bridge.launch.py 里可调）：
+     navigate_to_start: true          关掉则回到"必须手动把车开到起点"
+     navigate_to_start_timeout_sec: 120.0
+     start_position_tolerance: 0.5    已经够近就不导航
+     start_yaw_tolerance: 0.5
+
+
+================================================================================
+  五、其它操作
+================================================================================
+
+  清空当前多边形（重画）：
+      ros2 service call /clear std_srvs/srv/Trigger "{}"
+
+  撤销上一个点（点错了）：
+      ros2 service call /undo_last_point \
+          std_srvs/srv/Trigger "{}"
+
+  只闭合、不执行：
+	      ros2 service call /close_polygon \
+		  std_srvs/srv/Trigger "{}"
+
+  只执行（多边形已闭合时）：
+      ros2 service call /execute_polygon \
+          std_srvs/srv/Trigger "{}"
+
+
+================================================================================
+  六、停车 / 急停
+================================================================================
+
+  让覆盖任务中止（同时下发零速）：
+      ros2 topic pub --once /coverage/emergency_stop \
+          std_msgs/msg/Bool "{data: true}"
+
+  自己要用遥控器开：
+      直接拨遥控器即可 —— 覆盖任务会自动中止（桥接节点订阅了
+      /vehicle/remote_manual_override）。
+      【之后不要把遥控器拨回"自动"挡】，除非你确定要让覆盖继续
+      —— 拨回即重新接受 ROS 指令，任务会从原地继续跑。
+
+  要彻底停住：
+      用【物理急停】。软件急停只中止当前这次任务，且只发有限帧零速。
+
+
+================================================================================
+  七、预计耗时
+================================================================================
+
+  252 m² 场地约 15~16 分钟（车上 max_forward_speed = 0.4）。
+
+  注意：不要直接读 coverage_server 报告的 task_time，那是按 F2C 默认的 1.0 m/s
+  算的。换算：真实耗时 = task_time ÷ 车上实际速度。
+
+
+================================================================================
+  八、三条绝对禁止
+================================================================================
+
+  1. 禁止用 complete_control.launch.py 跑覆盖
+     它只设了遗留参数 max_linear_speed: 2.0，导致 max_forward_speed /
+     max_reverse_speed 回退到 2.0 m/s（应为 0.4 / 0.25），代码里的速度钳位
+     形同虚设。
+
+  2. 禁止用 system.launch.py / nav2/launch/nav2_launch.py
+     引用不存在的 turn_on_wheeltec_robot，起不来。
+
+  3. 禁止在无人值守时用遥控器"自动"挡启动
+     见第一节的"控制权静默移交"。
+
+
+================================================================================
+  九、常见问题速查
+================================================================================
+
+  现象                          立即动作
+  ----------------------------  ----------------------------------------------
+  车要撞 / 跑偏 / 任何不对      按【物理急停】（最可靠）
+  想让覆盖停但不想断电          ros2 topic pub --once /coverage/emergency_stop \
+                                    std_msgs/msg/Bool "{data: true}"
+  车不动但任务显示在执行        查 /vehicle/remote_manual_override 是否为 true
+                                （遥控器接管中，ROS 指令被忽略）
+                               查 /vehicle/enabled
+  日志出现 SAFETY ABORT         说明抢占或急停被触发，车已收到零速；
+                                确认现场情况再重新开始
+  覆盖跑到一半停了              看桥接节点日志的错误码：
+                                  901 = action server 不可用
+                                  904 = 超时
+                                  909 = 安全中止（抢占/急停）
+  路径生成了但车不动，            controller_server 日志出现
+  日志 FollowPath status=6        "Resulting plan has 0 poses in it"
+  （STATUS_ABORTED）              → 路径全在 local costmap 窗口（±3 m）之外。
+                                    正常情况 approach 会自动把车开过去；若仍出现，
+                                    说明 approach 没成功（见下一行）
+  车不动，日志 error_code=910     approach 阶段失败：
+                                   · navigate_to_pose action 不在（bt_navigator 没起）
+                                   · 起点不可达/被障碍包住 → 需要人工把车挪到
+                                     多边形附近，或换个区域
+                                   · 超过 navigate_to_start_timeout_sec（120 s）
+                                     → 起点太远，先把车开近一些
+  路径形状很奇怪                  多半是区域太小、被 1.30 m 地头内缩没了。
+                                    改用 8×8 m 以上的区域
+  规划就失败，                   coverage_server 报
+  桥接日志 error_code=801         "Geometry does not contain point 0"
+                                 → 多边形相对地头太窄。地头 1.30 m 要从各边
+                                   内缩，多边形短边必须 > 2.60 m 才有非空核心；
+                                   加一条 0.60 m 覆盖带则需 >= 3.2 m。
+                                   【建议 >= 8×8 m】。桥接节点日志里会直接
+                                   打印这段说明。
+  CAN 链路疑似掉线              除日志外没有任何告警（静默降级）。
+                                查 /can_bridge_status，或看
+                                /vehicle/remote_manual_override 是否还有 1 Hz
+
+  本项目【不记录实际轨迹】。出现"看起来扫完了但角落没扫到"时，没有任何数据可
+  定位漏扫段，只能整片重跑。所以发现不对要尽早停。
+
+
+================================================================================
+  十、与仿真侧命令的对应关系
+================================================================================
+
+  仿真（turtlebot3_ws）          真车（本工作区）
+  ----------------------------  ----------------------------------------------
+  coverage_cli close-outer      ros2 service call \
+                                    /close_and_execute \
+                                    std_srvs/srv/Trigger "{}"
+  coverage_cli clear            同上，服务名换 clear
+  coverage_cli undo-point       同上，服务名换 undo_last_point
+  coverage_cli cancel           发 /coverage/emergency_stop
+  coverage_cli status           查桥接节点日志 / ros2 action list
+
+  真车暂不具备（仿真有）：
+   · 画洞（inner polygon）：底层的 ComputeCoveragePath action 支持"外框 + 内部
+     挖空"，但当前 RViz 选择器没有画洞的入口，只能画一个外框。
+   · 按任务临时改参数：仿真可在 start 时用 --operation-width / --swath-angle-deg
+     覆盖；真车这些在 coverage_params.yaml 里，改了要重启。
+
+
+================================================================================
+  附：RViz 工具栏在哪
+================================================================================
+
+  RViz 顶部工具栏 → "Publish Point"（图标是一个带小十字的点）。
+  若工具栏没显示，在菜单 Panels → Tool Properties 里确认。
+
+
+================================================================================
+  详细原理与风险：<ws>/doc/Coverage_Porting_Plan.md
+  现场打印清单：  <ws>/doc/发车前检查清单.md
+================================================================================

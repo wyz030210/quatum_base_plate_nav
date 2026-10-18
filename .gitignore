@@ -9,9 +9,8 @@
 **/*.py[cod]
 **/.pytest_cache/
 
-# Keep the existing upstream repositories independent.
+# Keep Fields2Cover independent; OpenNav Coverage is tracked as source.
 /src/Fields2Cover/
-/src/opennav_coverage/
 
 *.swp
 *.swo
