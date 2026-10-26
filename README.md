@@ -4,8 +4,6 @@
 
 基于 **ROS 2 Humble** 的阿克曼底盘导航工作空间，集成 Livox MID360、FAST-LIO、Nav2 和覆盖路径规划，提供室内 AMCL 导航、室外 RTK 定位导航及独立覆盖路径预览入口。
 
-仓库：[`wyz030210/quatum_base_plate_nav`](https://github.com/wyz030210/quatum_base_plate_nav)
-
 ## 功能概览
 
 | 功能 | 实现 | 启动入口 |
@@ -47,7 +45,7 @@ FAST-LIO 输出 `/Odometry`，整车配置关闭其里程计 TF 发布，由本�
 
 ## 环境与依赖
 
-- Ubuntu 22.04、ROS 2 Humble、`colcon` 和 `rosdep`。
+- Ubuntu 22.04、ROS 2 Humble。
 - ROS 依赖包括 Nav2、`robot_localization`、`pointcloud_to_laserscan` 和 RViz2。
 - 原生库包括 Livox-SDK2、Eigen、PCL 和 GeographicLib；覆盖规划还需要 Fields2Cover。
 - 实车配置：Livox MID360、兼容当前 CAN 协议的阿克曼底盘，以及室外模式使用的 RTK 接收机。
@@ -64,10 +62,10 @@ Livox-SDK2 的安装说明见 [Livox 驱动文档](src/livox_ros_driver2/README.
 
 ### 1. 下载项目源码
 
-在准备存放项目的目录中执行，将仓库克隆到 `new_base_plate_indoor_ws`：
+在准备存放项目的目录中执行：
 
 ```bash
-git clone https://github.com/wyz030210/quatum_base_plate_nav.git new_base_plate_indoor_ws
+git clone https://github.com/wyz030210/quatum_base_plate_nav.git
 ```
 
 该命令同时获取项目维护的 OpenNav Coverage 源码及本地适配，无需单独克隆该上游仓库或初始化子模块。
@@ -75,7 +73,7 @@ git clone https://github.com/wyz030210/quatum_base_plate_nav.git new_base_plate_
 ### 2. 进入工作空间根目录
 
 ```bash
-cd new_base_plate_indoor_ws
+cd YOUR_WORKSPACE
 ```
 
 后续依赖安装、编译和环境加载命令均在此目录执行；源码位于其下的 `src/` 中。
@@ -84,10 +82,7 @@ cd new_base_plate_indoor_ws
 
 ```bash
 source /opt/ros/humble/setup.bash
-printenv ROS_DISTRO
 ```
-
-第二条命令应输出 `humble`。如果环境脚本不存在，需要先完成 ROS 2 Humble 的安装。
 
 ### 4. 准备外部原生依赖
 
@@ -122,31 +117,10 @@ rosdep install --from-paths src --ignore-src --rosdistro humble -r -y
 ### 7. 编译整车启动包及其依赖
 
 ```bash
-colcon build --symlink-install --packages-up-to robot_bringup \
-  --cmake-args -DROS_EDITION=ROS2 -DHUMBLE_ROS=humble
+colcon build 
 ```
-
-- `--symlink-install`：在可用时通过符号链接安装文件，方便开发调试。
-- `--packages-up-to robot_bringup`：编译 `robot_bringup` 及其递归依赖。
-- `-DROS_EDITION=ROS2 -DHUMBLE_ROS=humble`：向 CMake 传入当前 Livox 驱动使用的 ROS 2 / Humble 构建选项。
 
 等待编译结束，确认终端汇总中没有失败或中止的包，再继续加载环境。
-
-### 8. 加载工作空间并检查包是否可见
-
-```bash
-source install/setup.bash
-ros2 pkg prefix robot_bringup
-```
-
-最后一条命令应输出本工作空间内 `robot_bringup` 的安装路径。之后可按“快速开始”选择预览或实车启动方式。
-
-每次打开新的运行终端，都需要先进入工作空间根目录，并重新执行：
-
-```bash
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-```
 
 ## 快速开始
 
@@ -157,8 +131,6 @@ source install/setup.bash
 ```bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
-export ROS_DOMAIN_ID=94
-export ROS_LOCALHOST_ONLY=1
 
 ros2 launch wheeltec_nav2 coverage_preview.launch.py
 ```
@@ -263,8 +235,6 @@ doc/                    # 操作手册与调试说明
 - [底盘协议与架构](src/vehicle_can_bridge/docs/ARCHITECTURE.md)
 
 部分历史文档和脚本仍保留旧工作空间路径或旧参数。启动入口以当前 `src/robot_bringup/launch/`、配置以源码 YAML 为准。
-
-问题反馈与功能建议请提交到 [GitHub Issues](https://github.com/wyz030210/quatum_base_plate_nav/issues)，附上运行模式、启动命令、相关日志及复现步骤。
 
 ## 致谢
 

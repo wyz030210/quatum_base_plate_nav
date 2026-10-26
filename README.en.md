@@ -4,8 +4,6 @@
 
 A **ROS 2 Humble** workspace for Ackermann robot navigation, integrating Livox MID360, FAST-LIO, Nav2, and coverage path planning. It provides separate entry points for indoor AMCL navigation, outdoor RTK navigation, and standalone coverage previews.
 
-Repository: [`wyz030210/quatum_base_plate_nav`](https://github.com/wyz030210/quatum_base_plate_nav)
-
 ## Features
 
 | Feature | Implementation | Entry point |
@@ -47,7 +45,7 @@ FAST-LIO publishes `/Odometry`. Its odometry TF output is disabled in the vehicl
 
 ## Requirements
 
-- Ubuntu 22.04, ROS 2 Humble, `colcon`, and `rosdep`.
+- Ubuntu 22.04, ROS 2 Humble.
 - ROS dependencies include Nav2, `robot_localization`, `pointcloud_to_laserscan`, and RViz2.
 - Native libraries include Livox-SDK2, Eigen, PCL, and GeographicLib. Coverage planning also requires Fields2Cover.
 - Vehicle hardware: a Livox MID360, an Ackermann chassis compatible with the implemented CAN protocol, and an RTK receiver for outdoor operation.
@@ -64,10 +62,10 @@ Follow these steps in order in a Bash environment with ROS 2 Humble, `git`, `col
 
 ### 1. Download the source
 
-From the directory where you want to keep the project, clone the repository into `new_base_plate_indoor_ws`:
+Run the following command from the directory where you want to keep the project:
 
 ```bash
-git clone https://github.com/wyz030210/quatum_base_plate_nav.git new_base_plate_indoor_ws
+git clone https://github.com/wyz030210/quatum_base_plate_nav.git
 ```
 
 This also retrieves the OpenNav Coverage sources and local adaptations maintained by this project. A separate upstream clone or submodule initialization is not required.
@@ -75,7 +73,7 @@ This also retrieves the OpenNav Coverage sources and local adaptations maintaine
 ### 2. Enter the workspace root
 
 ```bash
-cd new_base_plate_indoor_ws
+cd YOUR_WORKSPACE
 ```
 
 Run the following dependency installation, build, and environment commands from this directory. The source packages are under `src/`.
@@ -84,10 +82,7 @@ Run the following dependency installation, build, and environment commands from 
 
 ```bash
 source /opt/ros/humble/setup.bash
-printenv ROS_DISTRO
 ```
-
-The second command should print `humble`. If the setup script does not exist, complete the ROS 2 Humble installation first.
 
 ### 4. Prepare external native dependencies
 
@@ -122,31 +117,10 @@ This scans the `package.xml` files under `src/` and installs system dependencies
 ### 7. Build the vehicle bringup package and its dependencies
 
 ```bash
-colcon build --symlink-install --packages-up-to robot_bringup \
-  --cmake-args -DROS_EDITION=ROS2 -DHUMBLE_ROS=humble
+colcon build
 ```
-
-- `--symlink-install`: installs files using symbolic links where possible to support development.
-- `--packages-up-to robot_bringup`: builds `robot_bringup` and its recursive dependencies.
-- `-DROS_EDITION=ROS2 -DHUMBLE_ROS=humble`: passes the ROS 2 / Humble build options used by the current Livox driver to CMake.
 
 Wait for the build to finish and check that the summary contains no failed or aborted packages before loading the environment.
-
-### 8. Load the workspace and check package discovery
-
-```bash
-source install/setup.bash
-ros2 pkg prefix robot_bringup
-```
-
-The last command should print the installation path of `robot_bringup` inside this workspace. Continue with Quick start to choose a preview or vehicle launch mode.
-
-In every new runtime terminal, enter the workspace root and run:
-
-```bash
-source /opt/ros/humble/setup.bash
-source install/setup.bash
-```
 
 ## Quick start
 
@@ -157,8 +131,6 @@ Run the following commands from the root of a built workspace.
 ```bash
 source /opt/ros/humble/setup.bash
 source install/setup.bash
-export ROS_DOMAIN_ID=94
-export ROS_LOCALHOST_ONLY=1
 
 ros2 launch wheeltec_nav2 coverage_preview.launch.py
 ```
@@ -265,8 +237,6 @@ The following detailed guides are currently in Chinese:
 - [Chassis protocol and architecture](src/vehicle_can_bridge/docs/ARCHITECTURE.md)
 
 Some historical documents and scripts retain old workspace paths or parameter values. Use the current launch files under `src/robot_bringup/launch/` and the source YAML files as the reference.
-
-Report problems and feature requests through [GitHub Issues](https://github.com/wyz030210/quatum_base_plate_nav/issues). Include the operating mode, launch command, relevant logs, and reproduction steps.
 
 ## Acknowledgments
 
