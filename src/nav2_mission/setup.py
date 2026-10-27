@@ -24,6 +24,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'task_control_node = nav2_mission.task_control_node:main',
+            'task_control = nav2_mission.task_cli:main',
             'patrol_mission_node = nav2_mission.patrol_mission_node:main',
             'facility_detection_node = nav2_mission.facility_detection_node:main',
             'coverage_navpath_bridge_node = nav2_mission.coverage_navpath_bridge_node:main',
