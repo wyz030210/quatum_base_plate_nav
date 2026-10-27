@@ -1,0 +1,474 @@
+{
+  "captured_at": "2026-10-27T13:28:36.884847+00:00",
+  "capture_note": "Recreated from original source after previous temporary worktree loss; prior frozen archive was unavailable. Source files have not been modified by this recovery.",
+  "source_path": "/home/wyz/ros2/turtlebot3_ws/src/property_inspection",
+  "source_repository_commit": "2d27a084710b42720e36bf151bc15f91c43aa000",
+  "source_status": [
+    " M README.md",
+    " M config/nav2_params_inspection.yaml",
+    " M launch/inspection_sim.launch.py",
+    " M package.xml",
+    " M setup.cfg",
+    " M setup.py",
+    "?? config/coverage_params.yaml",
+    "?? launch/coverage_sim.launch.py",
+    "?? property_inspection/coverage/__init__.py",
+    "?? property_inspection/coverage/__pycache__/__init__.cpython-310.pyc",
+    "?? property_inspection/coverage/__pycache__/metrics.cpython-310.pyc",
+    "?? property_inspection/coverage/__pycache__/models.cpython-310.pyc",
+    "?? property_inspection/coverage/__pycache__/region_editor.cpython-310.pyc",
+    "?? property_inspection/coverage/metrics.py",
+    "?? property_inspection/coverage/models.py",
+    "?? property_inspection/coverage/region_editor.py",
+    "?? property_inspection/coverage_cli.py",
+    "?? property_inspection/coverage_task_node.py",
+    "?? rviz/coverage.rviz",
+    "?? scripts/generate_room3_map.py",
+    "!! .claude/settings.local.json",
+    "!! .pytest_cache/.gitignore",
+    "!! .pytest_cache/CACHEDIR.TAG",
+    "!! .pytest_cache/README.md",
+    "!! .pytest_cache/v/cache/lastfailed",
+    "!! .pytest_cache/v/cache/nodeids",
+    "!! .pytest_cache/v/cache/stepwise",
+    "!! __pycache__/setup.cpython-310.pyc",
+    "!! property_inspection/__pycache__/__init__.cpython-310.pyc",
+    "!! property_inspection/__pycache__/config_loader.cpython-310.pyc",
+    "!! property_inspection/__pycache__/coverage_cli.cpython-310.pyc",
+    "!! property_inspection/__pycache__/coverage_task_node.cpython-310.pyc",
+    "!! property_inspection/__pycache__/inspection_executor.cpython-310.pyc",
+    "!! property_inspection/__pycache__/mission_manager_node.cpython-310.pyc",
+    "!! property_inspection/__pycache__/mission_reporter.cpython-310.pyc",
+    "!! property_inspection/__pycache__/mission_runner.cpython-310.pyc",
+    "!! property_inspection/__pycache__/models.cpython-310.pyc",
+    "!! property_inspection/__pycache__/navigator.cpython-310.pyc",
+    "!! test/__pycache__/test_behavior_tree.cpython-310-pytest-6.2.5.pyc",
+    "!! test/__pycache__/test_behavior_tree.cpython-310.pyc",
+    "!! test/__pycache__/test_config_loader.cpython-310-pytest-6.2.5.pyc",
+    "!! test/__pycache__/test_coverage_launch.cpython-310-pytest-6.2.5.pyc",
+    "!! test/__pycache__/test_coverage_metrics.cpython-310-pytest-6.2.5.pyc",
+    "!! test/__pycache__/test_coverage_region.cpython-310-pytest-6.2.5.pyc",
+    "!! test/__pycache__/test_default_map_points.cpython-310-pytest-6.2.5.pyc",
+    "!! test/__pycache__/test_default_map_points.cpython-310.pyc",
+    "!! test/__pycache__/test_inspection_executor.cpython-310-pytest-6.2.5.pyc",
+    "!! test/__pycache__/test_launch_description.cpython-310-pytest-6.2.5.pyc",
+    "!! test/__pycache__/test_launch_description.cpython-310.pyc",
+    "!! test/__pycache__/test_mission_manager_node.cpython-310-pytest-6.2.5.pyc",
+    "!! test/__pycache__/test_mission_reporter.cpython-310-pytest-6.2.5.pyc",
+    "!! test/__pycache__/test_mission_runner.cpython-310-pytest-6.2.5.pyc",
+    "!! test/__pycache__/test_navigator.cpython-310-pytest-6.2.5.pyc",
+    "!! test/__pycache__/test_package_install.cpython-310-pytest-6.2.5.pyc",
+    "!! test/__pycache__/test_world_map_consistency.cpython-310-pytest-6.2.5.pyc",
+    "!! test/test_behavior_tree.py",
+    "!! test/test_config_loader.py",
+    "!! test/test_coverage_launch.py",
+    "!! test/test_coverage_metrics.py",
+    "!! test/test_coverage_region.py",
+    "!! test/test_default_map_points.py",
+    "!! test/test_inspection_executor.py",
+    "!! test/test_launch_description.py",
+    "!! test/test_mission_manager_node.py",
+    "!! test/test_mission_reporter.py",
+    "!! test/test_mission_runner.py",
+    "!! test/test_navigator.py",
+    "!! test/test_package_install.py",
+    "!! test/test_world_map_consistency.py"
+  ],
+  "target_actual_baseline": "fb222f9868375e9cf0d1f80b24a30c2e25741c41",
+  "target_actual_status": [],
+  "integration_baseline": "fb222f9868375e9cf0d1f80b24a30c2e25741c41",
+  "archive_sha256": "cb2f5aa0da30a5b543560243ec1e30bfd93aa64a6e9186a5c1759814c80c1a3e",
+  "files": [
+    {
+      "path": "README.md",
+      "size": 5283,
+      "sha256": "162d666dd0c73aa221ca44d3db1b7605e36b943d5bd1cbbd94d2ab649c7f35fc"
+    },
+    {
+      "path": "behavior_trees/inspection_nav_to_pose.xml",
+      "size": 1265,
+      "sha256": "f56bb9a634d26d694c2d6875ea52c3dba5e01ef9cddcdf0b762befe5eb1c75bd"
+    },
+    {
+      "path": "config/coverage_params.yaml",
+      "size": 1280,
+      "sha256": "886af12ecc4c416012b06bd0dff9a700bffcf261b0bf87b76b9e66a313e492cb"
+    },
+    {
+      "path": "config/inspection_points.yaml",
+      "size": 1163,
+      "sha256": "7a96a6bd22cd2dcce0a2d87d730462eba6362f3b48b55b48269da4dbc9d54ed2"
+    },
+    {
+      "path": "config/mission_templates.yaml",
+      "size": 695,
+      "sha256": "df78dc96f86fc1d0427b67a5bb2c974f24c0f9136b6bf33b0648b3c941d239cd"
+    },
+    {
+      "path": "config/nav2_params_inspection.yaml",
+      "size": 10701,
+      "sha256": "7ef53ec7655ac6e1c47a5584edf9cc2b5f0c79311604b62dadb9d1a56a0c49d7"
+    },
+    {
+      "path": "config/sim_params.yaml",
+      "size": 248,
+      "sha256": "e6cb8ff2b6ab6e68e4a9d0d9a8738574dea7d421c3e9374872d0feca901a0fca"
+    },
+    {
+      "path": "launch/coverage_sim.launch.py",
+      "size": 5174,
+      "sha256": "26b87342c458a01e4a0c3a2b48080b329deec3c6f3152f405931743906ea7322"
+    },
+    {
+      "path": "launch/inspection_sim.launch.py",
+      "size": 9699,
+      "sha256": "b20c9d02686c2fc1c8348b57501c70ac42ec1d02b42d4c8d07bd977d3f6d522b"
+    },
+    {
+      "path": "package.xml",
+      "size": 1917,
+      "sha256": "e5da4c937a28810daefe94783f78b73a7db213a97196aa4f2510ac1e85982d75"
+    },
+    {
+      "path": "property_inspection/__init__.py",
+      "size": 408,
+      "sha256": "08cae3698a65d956e9479a66db425205d60529ef056fd27622df2ef0e2aaaee7"
+    },
+    {
+      "path": "property_inspection/config_loader.py",
+      "size": 7863,
+      "sha256": "b7e132acad0b71020ec657e21d35139b011eb6735f81f266f0f3d1e99b482ac9"
+    },
+    {
+      "path": "property_inspection/coverage/__init__.py",
+      "size": 202,
+      "sha256": "26c85f33e1a439bd89d04414308d03de48b80096591f87450aa0a481a5e1ba4e"
+    },
+    {
+      "path": "property_inspection/coverage/metrics.py",
+      "size": 2124,
+      "sha256": "13bf781f2b48746a20d6831e8d53675d38240630ba4007e357d855e2bde751aa"
+    },
+    {
+      "path": "property_inspection/coverage/models.py",
+      "size": 939,
+      "sha256": "5529dcb79d6248008ce308c671db9afcd0406c4b25c6aff4017d8c6e498c77a5"
+    },
+    {
+      "path": "property_inspection/coverage/region_editor.py",
+      "size": 4883,
+      "sha256": "e00471e41e0554837aa7bca3c6a4d7b7aed3096f911c16c7255e51be6e944d78"
+    },
+    {
+      "path": "property_inspection/coverage_cli.py",
+      "size": 4281,
+      "sha256": "04f737161e2214313b3f572f6ec9627d0eff131c21d400bfb05339ababc7beeb"
+    },
+    {
+      "path": "property_inspection/coverage_task_node.py",
+      "size": 42990,
+      "sha256": "26c959f2cc5f162767327e28e5e0c669726d65af3aacf1f3ae1d8361ffe05d92"
+    },
+    {
+      "path": "property_inspection/inspection_executor.py",
+      "size": 1183,
+      "sha256": "bcf95a88b1fe2d297581741bd7a56cfc85b197849264b40dec84cec91162a0c5"
+    },
+    {
+      "path": "property_inspection/mission_manager_node.py",
+      "size": 5773,
+      "sha256": "9ced8a4ad8043a897fb443f7084767886c7b713b8f9ce5ea1cef75cbc70c88cb"
+    },
+    {
+      "path": "property_inspection/mission_reporter.py",
+      "size": 7498,
+      "sha256": "1dbd9cf6ed84550c1ecbff8262d6c498186d895c64d380bfc510e55aaabb41c5"
+    },
+    {
+      "path": "property_inspection/mission_runner.py",
+      "size": 4375,
+      "sha256": "6ce88a7bdcea75708549981cedbbf8c2a08107b707f201cb69a2791f1e5e293a"
+    },
+    {
+      "path": "property_inspection/models.py",
+      "size": 1470,
+      "sha256": "5a284b572e940b793ec691d1ebbf7530f17261db50ebde633715f7747dabaf6c"
+    },
+    {
+      "path": "property_inspection/navigator.py",
+      "size": 11598,
+      "sha256": "e27b10bf484af521840bce81b7c155f7f8d844c051e97cb964997aa0d4f9a746"
+    },
+    {
+      "path": "resource/property_inspection",
+      "size": 1,
+      "sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+    },
+    {
+      "path": "rviz/coverage.rviz",
+      "size": 5864,
+      "sha256": "abcc9ea429d38a5109332b62bf68c5e5f338babac457b3b5f917332ebe71095a"
+    },
+    {
+      "path": "scripts/generate_room3_map.py",
+      "size": 4074,
+      "sha256": "03d5c9f1aa378856b610aa319044654baaa596726c320c85d25bd6832b5127ed"
+    },
+    {
+      "path": "setup.cfg",
+      "size": 137,
+      "sha256": "33aa55c7c0e7d2034adee7a70b323252e50d845e9c4539d44aae41717da65304"
+    },
+    {
+      "path": "setup.py",
+      "size": 1304,
+      "sha256": "6c723374e8ca340c70cb9d216712a68a7a38e937873d18620c602a5d3561b669"
+    },
+    {
+      "path": "test/test_behavior_tree.py",
+      "size": 3730,
+      "sha256": "04a14ee1eb0711ce6a692060ada08b0d607a69fffbb70295fd233e3600bff803"
+    },
+    {
+      "path": "test/test_config_loader.py",
+      "size": 6239,
+      "sha256": "2b56f9c0a577fb3fbaf3eb9ce4e0eec1d95e2fc448cd3ff9e695cde577ee43dc"
+    },
+    {
+      "path": "test/test_coverage_launch.py",
+      "size": 2654,
+      "sha256": "e55fbf5097665bd57602074eaaec0e5c853c84aeb37cf86c3cc07a53aa38c215"
+    },
+    {
+      "path": "test/test_coverage_metrics.py",
+      "size": 2071,
+      "sha256": "164d01c507c48b285e61857e264e845e7fb0ccc136c5a05b180f2fddcd13106d"
+    },
+    {
+      "path": "test/test_coverage_region.py",
+      "size": 2066,
+      "sha256": "ed5b60d2ed8741142e15c17f544c0e1c76739ed5d50792722e522179b4daa79b"
+    },
+    {
+      "path": "test/test_default_map_points.py",
+      "size": 8499,
+      "sha256": "717315aca75c3f5e6ad5d99429cb0126a2bf5e20c07e9a0b4cc4cbfaef5192c2"
+    },
+    {
+      "path": "test/test_inspection_executor.py",
+      "size": 1575,
+      "sha256": "fb4e69dd404327d87a9e277a748bfa44686467f948ccb1f3e3f1cd64f16450b2"
+    },
+    {
+      "path": "test/test_launch_description.py",
+      "size": 8528,
+      "sha256": "fa1e71c6eeb4d7a8aadf9eac9b2710c88a4418edc96ff0670a50275e7054ad6b"
+    },
+    {
+      "path": "test/test_mission_manager_node.py",
+      "size": 3995,
+      "sha256": "b48f62f9b3fbe82eeb2e7cba98c49b74d34134605fb26ca44e49dd1ab15c9bce"
+    },
+    {
+      "path": "test/test_mission_reporter.py",
+      "size": 6833,
+      "sha256": "528c1c8a7147e16618013cf59f76e0a95ef1687b8f5b3274e43aea437fa4bbe3"
+    },
+    {
+      "path": "test/test_mission_runner.py",
+      "size": 4228,
+      "sha256": "2aed5167118262b4db1c3c75950eda377e70cad4e5c929d521e4a32dcb5c556b"
+    },
+    {
+      "path": "test/test_navigator.py",
+      "size": 10556,
+      "sha256": "4153f09d836b49ccd46c0e2c639d96a4415d0eaa55161f0077b1c8e1c219f5fb"
+    },
+    {
+      "path": "test/test_package_install.py",
+      "size": 2632,
+      "sha256": "6541e767fba8c3559dea14044f1dd0594c33c3306f5eb5c7a4ed359635b23ef2"
+    },
+    {
+      "path": "test/test_world_map_consistency.py",
+      "size": 2459,
+      "sha256": "c062b78c81166e2d7c8f709677b0d00d628502f212cb92f96d7b8d9d014f8b8f"
+    },
+    {
+      "path": "worlds/room3.world",
+      "size": 37750,
+      "sha256": "7e0719d4899311b6a6875393a1e48907e3da4c77c75f54808e897c27dd4a6c97"
+    }
+  ],
+  "excluded": [
+    {
+      "path": ".claude/settings.local.json",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": ".pytest_cache/.gitignore",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": ".pytest_cache/CACHEDIR.TAG",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": ".pytest_cache/README.md",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": ".pytest_cache/v/cache/lastfailed",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": ".pytest_cache/v/cache/nodeids",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": ".pytest_cache/v/cache/stepwise",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "__pycache__/setup.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "property_inspection/__pycache__/__init__.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "property_inspection/__pycache__/config_loader.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "property_inspection/__pycache__/coverage_cli.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "property_inspection/__pycache__/coverage_task_node.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "property_inspection/__pycache__/inspection_executor.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "property_inspection/__pycache__/mission_manager_node.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "property_inspection/__pycache__/mission_reporter.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "property_inspection/__pycache__/mission_runner.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "property_inspection/__pycache__/models.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "property_inspection/__pycache__/navigator.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "property_inspection/coverage/__pycache__/__init__.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "property_inspection/coverage/__pycache__/metrics.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "property_inspection/coverage/__pycache__/models.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "property_inspection/coverage/__pycache__/region_editor.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_behavior_tree.cpython-310-pytest-6.2.5.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_behavior_tree.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_config_loader.cpython-310-pytest-6.2.5.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_coverage_launch.cpython-310-pytest-6.2.5.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_coverage_metrics.cpython-310-pytest-6.2.5.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_coverage_region.cpython-310-pytest-6.2.5.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_default_map_points.cpython-310-pytest-6.2.5.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_default_map_points.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_inspection_executor.cpython-310-pytest-6.2.5.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_launch_description.cpython-310-pytest-6.2.5.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_launch_description.cpython-310.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_mission_manager_node.cpython-310-pytest-6.2.5.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_mission_reporter.cpython-310-pytest-6.2.5.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_mission_runner.cpython-310-pytest-6.2.5.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_navigator.cpython-310-pytest-6.2.5.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_package_install.cpython-310-pytest-6.2.5.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    },
+    {
+      "path": "test/__pycache__/test_world_map_consistency.cpython-310-pytest-6.2.5.pyc",
+      "reason": "generated cache or local agent settings; not reproducible source"
+    }
+  ],
+  "python_packages": {
+    "PyYAML": "5.4.1",
+    "pytest": "6.2.5",
+    "shapely": "2.1.2",
+    "numpy": "2.2.6"
+  },
+  "ros_debian_packages": [
+    "ros-humble-geometry-msgs=4.9.2-1jammy.20260907.210358",
+    "ros-humble-nav2-msgs=1.1.20-1jammy.20260907.223327",
+    "ros-humble-rclpy=3.3.22-1jammy.20260907.213431",
+    "ros-humble-rosidl-default-generators=1.2.1-1jammy.20260907.201146",
+    "ros-humble-std-msgs=4.9.2-1jammy.20260907.205027"
+  ]
+}
