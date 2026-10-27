@@ -6,6 +6,8 @@
 
 ## 文档导航
 
+- 自动任务的共同速度入口、停止/接管/急停契约与无硬件测试：[`docs/COMMAND_SAFETY.md`](docs/COMMAND_SAFETY.md)。任务模式须显式启用 `task_control_required`；默认普通导航保留空闲后接受新目标的行为。
+
 每份文档都有 Markdown 源文件（含 Mermaid 图表，GitHub/大部分 Markdown 阅读器直接能看图）和对应 PDF（图表已渲染成矢量图，适合打印/离线分发）：
 
 - **第一次用，想让车动起来** → [`docs/GETTING_STARTED.md`](docs/GETTING_STARTED.md) / [PDF](docs/GETTING_STARTED.pdf)：编译、确认串口、键盘遥控/发指令、看反馈，一步步来

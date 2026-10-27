@@ -14,9 +14,10 @@ on real hardware, 2026-07-13). Run keyboard_control.py directly via
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -30,6 +31,10 @@ def generate_launch_description():
     serial_port = LaunchConfiguration('serial_port')
 
     return LaunchDescription([
+        DeclareLaunchArgument(
+            'command_safety_params', default_value=PathJoinSubstitution([
+                FindPackageShare('vehicle_can_bridge'), 'config', 'command_safety.yaml'])),
+        DeclareLaunchArgument('task_control_required', default_value='false'),
         DeclareLaunchArgument('wheel_base', default_value='0.3'),
         DeclareLaunchArgument('wheel_radius', default_value='0.1275'),
         DeclareLaunchArgument('max_forward_speed', default_value='0.25'),
@@ -50,7 +55,9 @@ def generate_launch_description():
             executable='cmd_vel_to_can',
             name='cmd_vel_to_can_node',
             output='screen',
-            parameters=[{
+            parameters=[LaunchConfiguration('command_safety_params'), {
+                'task_control_required': ParameterValue(
+                    LaunchConfiguration('task_control_required'), value_type=bool),
                 'wheel_base': ParameterValue(wheel_base, value_type=float),
                 'wheel_radius': ParameterValue(wheel_radius, value_type=float),
                 'max_forward_speed': ParameterValue(max_forward_speed, value_type=float),
