@@ -7,7 +7,7 @@ import time
 import uuid
 from pathlib import Path
 
-from .single_point_inspection import SinglePointInspection
+from .inspection import Inspection
 from .task_adapters import ExecutionUpdate, StopState
 
 
@@ -24,7 +24,7 @@ class TaskManager:
         self.stop = stop
         self.report_dir = Path(report_dir)
         self.clock = clock
-        self.handlers = handlers or {'inspection': SinglePointInspection(navigation)}
+        self.handlers = handlers or {'inspection': Inspection(navigation)}
         for value in (state_timeout, cancel_timeout, task_timeout):
             if not math.isfinite(value) or value <= 0:
                 raise ValueError('task timeouts must be finite and positive')
@@ -44,8 +44,11 @@ class TaskManager:
         if task_type not in self.handlers:
             return {'accepted': False, 'task_id': '', 'message': 'unsupported task type'}
         try:
-            config = self.handlers[task_type].prepare(request)
-        except (ValueError, TypeError, KeyError) as exc:
+            handler = self.handlers[task_type]
+            config = handler.prepare(request)
+            details = (handler.initial_details(config)
+                       if hasattr(handler, 'initial_details') else {})
+        except Exception as exc:
             return {'accepted': False, 'task_id': '', 'message': str(exc)}
         now = self.clock()
         loc_error = self._localization_error(config, now)
@@ -60,7 +63,7 @@ class TaskManager:
                         'phase': 'dependency_check', 'result': None, 'error': '',
                         'report_error': '', 'report_path': '',
                         'simulated': task_type == 'inspection',
-                        'started_at': now, 'finished_at': None, 'details': {},
+                        'started_at': now, 'finished_at': None, 'details': details,
                         'started_utc': datetime.now(timezone.utc).isoformat(),
                         'cleanup_confirmed': False, 'phases': ['dependency_check']}
         self.active = True
@@ -165,6 +168,8 @@ class TaskManager:
                 self._stop('failed', 'task_timeout')
         if self.stopping_at is not None:
             update = None if self.operation is None else self._poll(now)
+            if update is not None and update.details:
+                self.current['details'] = copy.deepcopy(update.details)
             done = update is None or update.done
             if update is not None and update.error and not update.done:
                 self.current['cleanup_error'] = update.error

@@ -1,0 +1,27 @@
+# Copy to a site-owned file and replace all null values with surveyed map-frame
+# coordinates and yaw (radians). This template is deliberately invalid until then.
+points:
+  - id: site_security
+    name: 现场安防点
+    type: security
+    pose: {x: null, y: null, yaw: null}
+    stay_time: 2.0
+    allow_skip: false
+  - id: site_facility
+    name: 现场设备点
+    type: facility
+    pose: {x: null, y: null, yaw: null}
+    stay_time: 2.0
+    allow_skip: false
+  - id: site_environment
+    name: 现场环境点
+    type: environment
+    pose: {x: null, y: null, yaw: null}
+    stay_time: 2.0
+    allow_skip: true
+  - id: site_dock
+    name: 现场收尾点（不验证充电）
+    type: dock
+    pose: {x: null, y: null, yaw: null}
+    stay_time: 0.0
+    allow_skip: false

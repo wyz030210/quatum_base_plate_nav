@@ -277,10 +277,18 @@ def test_external_stop_during_navigation_ends_the_automatic_task(tmp_path):
     assert manager.status()['error'] == 'external stop requested'
 
 
-def test_single_point_rejects_skip_rule_until_multi_point_handler_is_enabled(tmp_path):
+def test_direct_point_skip_rule_is_supported_without_retrying_failed_navigation(tmp_path):
     import copy
     manager, clock, nav, stop = system(tmp_path)
     request = copy.deepcopy(REQUEST)
     request['point']['allow_skip'] = True
-    reply = manager.start('inspection', request)
-    assert not reply['accepted'] and 'allow_skip' in reply['message']
+    assert manager.start('inspection', request)['accepted']
+    tick(manager, clock)
+    nav.motions[0].update = ExecutionUpdate('navigating', True, False, 'path blocked')
+    tick(manager, clock)
+    stop.confirm()
+    manager.tick()
+    status = manager.status()
+    assert status['result'] == 'succeeded'
+    assert status['details']['skipped'] == 1 and status['details']['succeeded'] == 0
+    assert len(nav.goals) == 1
