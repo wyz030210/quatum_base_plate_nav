@@ -11,6 +11,7 @@ from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import String
 
+from .coverage_editor_ros import CoverageEditorRos
 from .task_control import TaskManager
 from .task_ros_adapters import RosLocalization, RosNavigation, RosStop, decode_json
 
@@ -36,6 +37,7 @@ class TaskControlNode(Node):
             RosLocalization(self, param('localization_topic')), self.stop_adapter,
             param('report_dir'), state_timeout=param('state_timeout_sec'),
             cancel_timeout=param('cancel_timeout_sec'), task_timeout=param('task_timeout_sec'))
+        self.coverage_editor = CoverageEditorRos(self, self.manager)
         self.task_services = [
             self.create_service(StartTask, '/task_control/start', self.start_task),
             self.create_service(CancelTask, '/task_control/cancel', self.cancel_task),
@@ -74,6 +76,7 @@ class TaskControlNode(Node):
     def tick(self):
         self.stop_adapter.beat()
         self.manager.tick()
+        self.coverage_editor.publish()
         if not self.manager.active or self.manager.status()['phase'] == 'stopping':
             self.stop_adapter.request_stop('')
         self.status_publisher.publish(String(
