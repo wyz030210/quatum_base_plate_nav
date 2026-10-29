@@ -65,17 +65,20 @@ class ReferenceOperation:
         if self.phase not in ('approaching', 'following'):
             return
         try:
-            stamp = data['source_stamp_sec']
+            source_stamp = data['source_stamp_sec']
+            stamp = data.get('pose_stamp_sec', source_stamp)
             if (data['valid'] is not True or data['frame_id'] != self.config['frame_id']
                     or not all(valid_coordinate(data[k]) for k in ('x', 'y', 'yaw'))
-                    or isinstance(stamp, bool) or not isinstance(stamp, (float, int))
-                    or not math.isfinite(stamp) or not 0 <= ros_now - stamp <= self.max_age):
+                    or any(isinstance(value, bool) or not isinstance(value, (float, int))
+                           or not math.isfinite(value) or not 0 <= ros_now - value <= self.max_age
+                           for value in (source_stamp, stamp))):
                 raise ValueError('invalid pose evidence')
             if self.last_stamp is not None and stamp <= self.last_stamp:
                 if stamp < self.last_stamp:
                     self.gap()
                 return
-            identity = tuple(data.get(k, '') for k in ('source', 'localization_profile', 'map_id'))
+            identity = tuple(data.get(k, '') for k in (
+                'source', 'localization_profile', 'map_id', 'evidence_generation'))
             if self.last_identity is not None and identity != self.last_identity:
                 self.gap()
             self.last_identity, self.last_stamp, self.last_received = identity, stamp, now
@@ -100,10 +103,10 @@ class ReferenceOperation:
             # Approach and coverage are separate evidence segments.
             self.current_segment = None
             self.distance.reset_segment()
+        if self.phase in ('approaching', 'following') and now - self.last_received > self.max_age:
+            self.gap()
         self.phase = update.phase
         self.done = update.done
-        if now - self.last_received > self.max_age:
-            self.gap()
         details = copy.deepcopy(update.details)
         planned = details.get('planned_path') or {}
         length = polyline_length((p['x'], p['y']) for p in planned.get('poses', []))
@@ -111,16 +114,18 @@ class ReferenceOperation:
         if self.phase == 'following' and isinstance(remaining, (int, float)):
             self.completion = path_completion(length, remaining) if length else None
         if self.dirty:
-            self.area = covered_segments_area_ratio(self.coverage_segments, self.region, self.width)
+            self.area = covered_segments_area_ratio(
+                self.coverage_segments, self.region, self.width)
             self.dirty = False
         details['reference_statistics'] = {
             'planned_path_length_m': length, 'path_completion_ratio': self.completion,
             'trace_estimated_area_ratio': self.area,
             'trace_distance_m': self.distance.distance,
             'trace_gap_count': self.gaps, 'trace_sample_count': sum(map(len, self.trace)),
-            'trace_complete': self.gaps == 0 and bool(self.trace),
+            'trace_complete': self.gaps == 0 and bool(self.coverage_segments),
             'collision_count': None,
-            'basis': 'geometric estimate from task-frame pose evidence; not measured cleaning quality',
+            'basis': ('geometric estimate from task-frame pose evidence; '
+                      'not measured cleaning quality'),
         }
         details['executed_trace'] = {
             'frame_id': self.config['frame_id'],

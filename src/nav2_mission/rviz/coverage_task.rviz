@@ -157,9 +157,6 @@ Visualization Manager:
         Durability Policy: Transient Local
         History Policy: Keep Last
         Depth: 1
-      Line Style: Lines
-      Line Width: 0.06
-      Color: 255; 80; 0
     - Class: rviz_default_plugins/Path
       Name: Nav2 Plan
       Enabled: true

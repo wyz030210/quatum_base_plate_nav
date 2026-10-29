@@ -44,7 +44,8 @@ class CoverageEditorRos:
 
     def command(self, request, response):
         try:
-            reply = self.session.command(request.operation, decode_json(request.request_json or '{}'))
+            reply = self.session.command(
+                request.operation, decode_json(request.request_json or '{}'))
         except ValueError as exc:
             reply = self.session.reply(False, str(exc))
         response.accepted = reply['accepted']
@@ -120,5 +121,5 @@ class CoverageEditorRos:
             marker.points = [Point(x=float(p[0]), y=float(p[1]), z=0.06) for p in segment]
             traces.markers.append(marker)
         self.trace.publish(traces)
-        self.progress.publish(String(data=json.dumps(details.get('reference_statistics', {}),
-                                                    allow_nan=False)))
+        self.progress.publish(String(data=json.dumps(
+            details.get('reference_statistics', {}), allow_nan=False)))
