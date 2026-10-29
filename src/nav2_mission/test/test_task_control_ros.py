@@ -53,6 +53,8 @@ def ros_system(tmp_path, request):
         if handle.is_cancel_requested:
             boundary['canceled'].append(handle.request)
             handle.canceled()
+        elif boundary.get('outcomes') and not boundary['outcomes'].pop(0):
+            handle.abort()
         else:
             handle.succeed()
         return NavigateToPose.Result()

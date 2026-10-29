@@ -1,0 +1,7 @@
+missions:
+  - id: site_patrol
+    name: 现场巡检
+    points: [site_security, site_facility, site_environment, site_dock]
+    # Empty selects the target vehicle's configured Ackermann behavior tree.
+    nav_bt: ""
+    stop_on_required_point_failure: true

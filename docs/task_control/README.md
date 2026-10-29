@@ -5,7 +5,8 @@ Ticket #2 provides a real ROS entry point and an injectable, nonblocking public
 The supervisor owns identity, authorization, cancellation, terminal status and
 reports. The task-specific `TaskHandler.prepare/begin` and `Operation.poll/cancel`
 interfaces allow later inspection rules and coverage execution to reuse it.
-Only the single-point `inspection` handler is enabled in this slice.
+The `inspection` handler supports direct points and ordered site templates with
+optional/required point rules; see [site inspection](INSPECTION.md).
 
 ## ROS services and CLI
 
@@ -30,8 +31,9 @@ Example request file:
 
 Coordinates and yaw (radians) must be finite, stay time nonnegative, and point type
 one of `security`, `facility`, `environment`, `dock`. Unknown options are rejected.
-This slice runs one point; `allow_skip=true` is explicitly rejected until the
-multi-point skip/required rules are enabled in #4.
+Direct requests also support `allow_skip=true`; an optional failed point is
+reported as skipped. Site-template requests select explicitly surveyed points
+from YAML, preserve order, and freeze the selected configuration before admission.
 All arrival actions are simulated; dock arrival does not assert docking/charging.
 
 ```bash
