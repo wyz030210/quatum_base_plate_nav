@@ -11,6 +11,8 @@ from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import String
 
+from .coverage_task import CoverageTask
+from .coverage_task_ros import RosCoverage
 from .task_control import TaskManager
 from .task_ros_adapters import RosLocalization, RosNavigation, RosStop, decode_json
 
@@ -20,6 +22,9 @@ class TaskControlNode(Node):
         super().__init__('task_control_node', **kwargs)
         defaults = {
             'navigate_action_name': '/navigate_to_pose',
+            'coverage_action_name': '/execute_coverage_navpath',
+            'coverage_prepare_service': '/coverage/prepare',
+            'coverage_state_topic': '/coverage/execution_state',
             'localization_topic': '/task_control/localization',
             'map_id': '', 'localization_profile': '', 'require_localization_schema': False,
             'report_dir': os.path.expanduser('~/.ros/task_reports'),
@@ -39,6 +44,9 @@ class TaskControlNode(Node):
             cancel_timeout=param('cancel_timeout_sec'), task_timeout=param('task_timeout_sec'),
             map_id=param('map_id'), localization_profile=param('localization_profile'),
             require_localization_schema=param('require_localization_schema'))
+        self.manager.handlers['coverage'] = CoverageTask(RosCoverage(
+            self, param('coverage_action_name'), param('coverage_prepare_service'),
+            param('coverage_state_topic')))
         self.task_services = [
             self.create_service(StartTask, '/task_control/start', self.start_task),
             self.create_service(CancelTask, '/task_control/cancel', self.cancel_task),
