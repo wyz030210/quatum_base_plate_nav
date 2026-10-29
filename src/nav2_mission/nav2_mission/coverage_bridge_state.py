@@ -2,6 +2,7 @@
 import copy
 import json
 import math
+import threading
 import time
 import uuid
 
@@ -53,21 +54,28 @@ class BridgeRun:
         self.records = []
         self.state = {'goal_id': self.id, 'task_id': task_id, 'phase': 'dependency_check',
                       'owned_goal_ids': child_ids(self.id), 'children': {},
-                      'phases': ['dependency_check'], 'planned_path': None, 'feedback': {}, 'error': '',
+                      'phases': ['dependency_check'], 'planned_path': None,
+                      'feedback': {}, 'error': '',
                       'config': copy.deepcopy(config)}
         self.lease_maybe_owned = False
         self.acquire_future = None
+        self.state_lock = threading.Lock()
         self.emit()
 
     def emit(self, phase=None, **changes):
-        state = copy.deepcopy(self.state)
-        if phase and phase != state['phase']:
-            state['phase'] = phase
-            state['phases'].append(phase)
-        state.update(changes)
-        payload = json.dumps(state, allow_nan=False)
-        self.state = state
-        self.node._state_pub.publish(String(data=payload))
+        # Feedback callbacks can run alongside execution/cleanup. Serialize the
+        # complete snapshot so an older feedback copy cannot erase a failure.
+        with self.state_lock:
+            state = copy.deepcopy(self.state)
+            if phase and phase != state['phase']:
+                state['phase'] = phase
+                state['phases'].append(phase)
+                if phase in ('approaching', 'following'):
+                    state['feedback'] = {}
+            state.update(changes)
+            payload = json.dumps(state, allow_nan=False)
+            self.state = state
+            self.node._state_pub.publish(String(data=payload))
 
     def feedback(self, stage, message):
         fields = ('distance_to_goal', 'speed') if stage == 'follow' else (
@@ -78,7 +86,7 @@ class BridgeRun:
             if isinstance(value, (int, float)) and math.isfinite(value):
                 data['distance_remaining' if name == 'distance_to_goal' else name] = value
         if data:
-            self.emit(feedback=data)
+            self.emit(feedback=dict(stage=stage, **data))
 
     def send(self, client, goal, stage):
         goal_id = self.state['owned_goal_ids'][stage]

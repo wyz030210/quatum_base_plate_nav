@@ -53,13 +53,14 @@ def coverage_system(tmp_path, request):
         if isinstance(value, list):
             fake.set_parameters([Parameter(name, Parameter.Type.INTEGER_ARRAY, value)])
     group = ReentrantCallbackGroup()
-    boundary = {'requests': [], 'goals': [], 'cancels': [], 'checks': [],
+    boundary = {'requests': [], 'goals': [], 'goal_ids': {}, 'cancels': [], 'checks': [],
                 'hold': '', 'accept_hold': '', 'release_accept': threading.Event(),
                 'release_terminal': threading.Event(), 'reject': '', 'fail': '',
                 'invalid_check': 0, 'stop_confirmed': True, 'hold_parameters': False,
                 'parameters_started': threading.Event(), 'parameters_release': threading.Event()}
     stop = {'stop_requested': True}
     boundary['stop_state'] = stop
+
     def parameters(values):
         if boundary['hold_parameters'] and any(
                 value.name == 'task_parameter_owner' and value.value for value in values):
@@ -70,8 +71,11 @@ def coverage_system(tmp_path, request):
     fake.add_on_set_parameters_callback(parameters)
     loc_pub = fake.create_publisher(String, '/task_control/localization', 10)
     state_pub = fake.create_publisher(String, '/task_control/state', 10)
+    manual_pub = fake.create_publisher(Bool, '/vehicle/remote_manual_override', 10)
+    boundary['manual_override'] = lambda active: manual_pub.publish(Bool(data=active))
     fake.create_subscription(Bool, '/task_control/stop',
-                             lambda msg: stop.update(stop_requested=msg.data), 10, callback_group=group)
+                             lambda msg: stop.update(stop_requested=msg.data), 10,
+                             callback_group=group)
 
     def states():
         loc_pub.publish(String(data=json.dumps({
@@ -126,9 +130,12 @@ def coverage_system(tmp_path, request):
 
         def execute(handle):
             boundary['goals'].append((kind, handle.request))
+            boundary['goal_ids'][kind] = bytes(handle.goal_id.uuid).hex()
             if kind == 'follow':
                 handle.publish_feedback(FollowPath.Feedback(distance_to_goal=2.5, speed=0.2))
             while boundary['hold'] == kind and not handle.is_cancel_requested:
+                if kind == 'follow':
+                    handle.publish_feedback(FollowPath.Feedback(distance_to_goal=2.5, speed=0.2))
                 time.sleep(0.01)
             if handle.is_cancel_requested:
                 boundary['cancels'].append(kind)
@@ -226,11 +233,14 @@ def test_rectangle_executes_full_path_and_waits_for_fresh_stop(coverage_system):
     assert report['details']['effective_planner']['operation_width'] == 0.7
     assert report['details']['planned_path']['poses'][0]['x'] == 4.0
     assert report['details']['feedback']['distance_remaining'] == 2.5
+    assert report['details']['feedback']['stage'] == 'follow'
+    assert report['details']['owned_goal_ids'] == boundary['goal_ids']
 
 
 @pytest.mark.parametrize('stage', ['compute', 'approach', 'follow'])
 @pytest.mark.parametrize('pending', [True, False])
-def test_cancel_drains_pending_or_accepted_children_before_next_task(coverage_system, stage, pending):
+def test_cancel_drains_pending_or_accepted_children_before_next_task(
+        coverage_system, stage, pending):
     start, status, call, boundary = coverage_system
     boundary['hold'] = stage
     if pending:
@@ -264,7 +274,8 @@ def test_cancel_drains_pending_or_accepted_children_before_next_task(coverage_sy
 
 
 @pytest.mark.parametrize('field', ['coordinate', 'planner'])
-def test_nonrepresentable_finite_numbers_are_rejected_without_losing_service(coverage_system, field):
+def test_nonrepresentable_finite_numbers_are_rejected_without_losing_service(
+        coverage_system, field):
     start, status, call, boundary = coverage_system
     config = {'frame_id': 'map', 'polygons': [[[0, 0], [8, 0], [8, 8], [0, 8]]]}
     if field == 'coordinate':
@@ -293,7 +304,8 @@ def test_illegal_planner_path_is_rejected_before_any_navigation(coverage_system,
     assert [kind for kind, _ in boundary['goals']] == ['compute']
 
 
-@pytest.mark.parametrize('coverage_system', [{'navigate_to_start_timeout_sec': 0.15}], indirect=True)
+@pytest.mark.parametrize(
+    'coverage_system', [{'navigate_to_start_timeout_sec': 0.15}], indirect=True)
 def test_approach_timeout_asserts_common_stop_before_delayed_child_terminal(coverage_system):
     start, status, call, boundary = coverage_system
     boundary['hold'] = 'approach'
@@ -311,7 +323,8 @@ def test_approach_timeout_asserts_common_stop_before_delayed_child_terminal(cove
 
 
 @pytest.mark.parametrize('coverage_system', [{'dependency_timeout_sec': 0.15}], indirect=True)
-def test_canceled_pending_parameter_acquire_is_drained_and_released_before_next_task(coverage_system):
+def test_canceled_pending_parameter_acquire_is_drained_and_released_before_next_task(
+        coverage_system):
     start, status, call, boundary = coverage_system
     boundary['hold_parameters'] = True
     reply = start()
@@ -383,3 +396,19 @@ def test_bridge_parameters_cannot_disable_path_checks_during_frozen_task(coverag
     boundary['hold'] = ''
     ended = wait_until(lambda: (value if not (value := status())['active'] else None))
     assert ended['result'] == 'succeeded' and len(boundary['checks']) == 2
+
+
+def test_rejected_outer_action_releases_prepared_snapshot_before_next_task(coverage_system):
+    start, status, call, boundary = coverage_system
+    # The bridge can learn of takeover before the manager's stop provider does.
+    boundary['manual_override'](True)
+    time.sleep(0.1)
+    assert start().accepted
+    ended = wait_until(lambda: (value if not (value := status())['active'] else None))
+    assert ended['result'] == 'failed' and ended['cleanup_confirmed']
+    assert not boundary['requests']
+    boundary['manual_override'](False)
+    time.sleep(0.1)
+    assert start().accepted
+    second = wait_until(lambda: (value if not (value := status())['active'] else None))
+    assert second['result'] == 'succeeded', second

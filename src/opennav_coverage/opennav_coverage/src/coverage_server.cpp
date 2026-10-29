@@ -53,6 +53,9 @@ CoverageServer::on_configure(const rclcpp_lifecycle::State & /*state*/)
     node, "robot_length", rclcpp::ParameterValue(0.88));
   nav2_util::declare_parameter_if_not_declared(
     node, "path_boundary_margin", rclcpp::ParameterValue(0.03));
+  get_parameter("validate_path_bounds", validate_path_bounds_);
+  get_parameter("robot_length", robot_length_);
+  get_parameter("path_boundary_margin", path_boundary_margin_);
 
   nav2_util::declare_parameter_if_not_declared(
     node, "task_parameter_owner", rclcpp::ParameterValue(""));
@@ -289,10 +292,9 @@ void CoverageServer::computeCoveragePath()
       // Converts UTM back to GPS, if necessary, for action returns
       if (goal->generate_path) {
         path = path_gen_->generatePath(route, goal->path_mode);
-        if (get_parameter("validate_path_bounds").as_bool()) {
+        if (validate_path_bounds_) {
           util::validatePathBounds(
-            path, field, get_parameter("robot_length").as_double(),
-            robot_params_->getWidth(), get_parameter("path_boundary_margin").as_double());
+            path, field, robot_length_, robot_params_->getWidth(), path_boundary_margin_);
         }
         result->coverage_path =
           util::toCoveragePathMsg(path, master_field, header, cartesian_frame_);
@@ -417,6 +419,10 @@ CoverageServer::dynamicParametersCallback(std::vector<rclcpp::Parameter> paramet
       } else if (name == "operation_width") {
         auto & robot = robot_params_->getRobot();
         robot.setCovWidth(parameter.as_double());
+      } else if (name == "robot_length") {
+        robot_length_ = parameter.as_double();
+      } else if (name == "path_boundary_margin") {
+        path_boundary_margin_ = parameter.as_double();
       }
     } else if (type == ParameterType::PARAMETER_STRING) {
       if (name == "default_decomp_type") {
@@ -447,6 +453,8 @@ CoverageServer::dynamicParametersCallback(std::vector<rclcpp::Parameter> paramet
         route_gen_->setTspSearchForOptimum(parameter.as_bool());
       } else if (name == "default_reduce_path") {
         path_gen_->setReducePath(parameter.as_bool());
+      } else if (name == "validate_path_bounds") {
+        validate_path_bounds_ = parameter.as_bool();
       }
     } else if (type == ParameterType::PARAMETER_INTEGER) {
       if (name == "default_spiral_n") {

@@ -23,3 +23,12 @@
 
 导入时工作树已移除 `opennav_coverage_demo`，本次保存当前状态，不恢复示例包。
 Fields2Cover 仍作为外部依赖单独准备。
+
+## 统一覆盖任务参数租约
+
+- `task_parameter_owner` 在原子参数事务中绑定外层覆盖 goal UUID，匹配的
+  `task_parameter_release` 才能清除；租约期间拒绝旁路参数改写和生命周期停用。
+- 规划器保留实际配置，桥接只设置请求中的作业宽度/条带方向，并读回完整生效配置。
+- 计算期间使用受同一互斥锁保护的边界校验参数缓存，避免与参数服务的锁顺序死锁。
+- 空 `default_custom_order` 使用明确的整数数组类型，支持完整参数快照读回。
+- 真实规划器租约与并发计算回归位于 `nav2_mission/test/test_coverage_parameter_lease_ros.py`。

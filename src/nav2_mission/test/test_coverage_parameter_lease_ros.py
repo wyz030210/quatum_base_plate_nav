@@ -46,17 +46,17 @@ def planner(tmp_path):
             request = ChangeState.Request()
             request.transition.id = transition
             assert call(ChangeState, 'change_state', request).success
-    
+
         def set_values(**values):
             return call(SetParametersAtomically, 'set_parameters_atomically',
                         SetParametersAtomically.Request(parameters=[
                             Parameter(key, value=value).to_parameter_msg()
                             for key, value in values.items()])).result
-    
+
         def get_values(*names):
             return [parameter_value_to_python(value) for value in call(
                 GetParameters, 'get_parameters', GetParameters.Request(names=list(names))).values]
-    
+
         yield set_values, get_values, node
     finally:
         executor.shutdown(timeout_sec=2)

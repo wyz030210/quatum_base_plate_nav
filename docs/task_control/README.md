@@ -7,6 +7,9 @@ reports. The task-specific `TaskHandler.prepare/begin` and `Operation.poll/cance
 interfaces allow later inspection rules and coverage execution to reuse it.
 The `inspection` handler supports direct points and ordered site templates with
 optional/required point rules; see [site inspection](INSPECTION.md).
+The `coverage` handler freezes rectangle requests and reuses the existing bridge
+for planning, first-pose approach and complete path execution; see
+[rectangle coverage](COVERAGE.md).
 
 ## ROS services and CLI
 

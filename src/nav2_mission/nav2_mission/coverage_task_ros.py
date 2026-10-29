@@ -77,10 +77,11 @@ class CoverageOperation:
                             PrepareCoverage.Request(goal_id=self.goal_id, discard=True))
                     if self.discard.done() and self.discard.result().accepted:
                         self.terminal = ExecutionUpdate('stopping', True, False,
-                                                       'coverage canceled before dispatch',
-                                                       details)
+                                                        'coverage canceled before dispatch',
+                                                        details)
                 else:
                     self.state = decode_json(response.state_json)
+                    details = copy.deepcopy(self.state)
                     self.dispatch_attempted = True
                     try:
                         self.motion = RosNavigationOperation(self.adapter.client.send_goal_async(
@@ -95,6 +96,17 @@ class CoverageOperation:
                     # Action result is only delivered after bridge-owned children
                     # terminate and its planner lease is released.
                     wrapped = self.motion.result.result() if self.motion.result else None
+                    if wrapped is None:
+                        # A rejected outer goal never consumes its prepared snapshot.
+                        # Retain ownership until the bridge acknowledges discarding it.
+                        if self.discard is None:
+                            self.discard = self.adapter.preparation.call_async(
+                                PrepareCoverage.Request(goal_id=self.goal_id, discard=True))
+                        if not self.discard.done() or not self.discard.result().accepted:
+                            return ExecutionUpdate(
+                                'stopping',
+                                error='coverage goal rejected; waiting reservation release',
+                                details=details)
                     code = int(wrapped.result.error_code) if wrapped is not None else None
                     succeeded = update.succeeded and code == 0
                     self.terminal = ExecutionUpdate(

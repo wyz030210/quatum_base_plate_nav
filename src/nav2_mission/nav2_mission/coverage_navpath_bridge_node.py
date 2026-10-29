@@ -297,8 +297,9 @@ class CoverageNavPathBridge(Node):
     def _guard_parameters(self, parameters):
         with self._active_goal_lock:
             busy = self._active_goal or self._prepared is not None
-        return SetParametersResult(successful=not busy,
-                                   reason='coverage settings frozen while reserved or active' if busy else '')
+        return SetParametersResult(
+            successful=not busy,
+            reason='coverage settings frozen while reserved or active' if busy else '')
 
     def _prepare_coverage(self, request, response):
         with self._active_goal_lock:
@@ -317,7 +318,8 @@ class CoverageNavPathBridge(Node):
                 config = prepare_coverage(decode_json(request.config_json))
                 if not request.task_id:
                     raise ValueError('task id is required')
-                self._prepared = dict(goal_id=request.goal_id, task_id=request.task_id, config=config)
+                self._prepared = dict(
+                    goal_id=request.goal_id, task_id=request.task_id, config=config)
                 response.accepted = True
                 response.state_json = json.dumps(dict(
                     goal_id=request.goal_id, task_id=request.task_id, phase='preparing',
@@ -334,7 +336,9 @@ class CoverageNavPathBridge(Node):
         return self._run.send(client, goal, stage)
 
     def _owned_result(self, handle):
-        return self._run.result_for(handle) if getattr(self, '_run', None) is not None else handle.get_result_async()
+        if getattr(self, '_run', None) is not None:
+            return self._run.result_for(handle)
+        return handle.get_result_async()
 
     def _emit(self, phase, **values):
         if getattr(self, '_run', None) is not None:
@@ -452,7 +456,7 @@ class CoverageNavPathBridge(Node):
             result = self._execute_path(proxy)
         except Exception as exc:
             self.get_logger().error(f'Coverage execution failed: {exc}')
-            run.emit(error=str(exc))
+            run.state['error'] = str(exc)
             if goal_handle.is_cancel_requested:
                 result.error_code = self.ERR_CANCELED
                 proxy.canceled()
@@ -608,8 +612,9 @@ class CoverageNavPathBridge(Node):
 
             invalid = self._path_error(compute_result.nav_path, frame_id)
             if invalid:
-                self._emit('validating', error=invalid)
                 result.error_code = self.ERR_UNSAFE_NAV_PATH
+                self._emit('validating', error=invalid, error_code=int(result.error_code),
+                           execution_failed=True)
                 goal_handle.abort()
                 return result
             self._emit('validating', planned_path=path_json(compute_result.nav_path))
@@ -949,7 +954,8 @@ class CoverageNavPathBridge(Node):
                 goal_handle.canceled()
                 return False
             if time.monotonic() >= deadline:
-                self.get_logger().error("Path validation service is unavailable; refusing execution.")
+                self.get_logger().error(
+                    "Path validation service is unavailable; refusing execution.")
                 result.error_code = self.ERR_UNSAFE_NAV_PATH
                 goal_handle.abort()
                 return False
@@ -1200,7 +1206,6 @@ class CoverageNavPathBridge(Node):
             goal_handle.cancel_goal_async()
         except Exception:  # pylint: disable=broad-except
             return
-
 
 
 def main(args=None) -> None:
