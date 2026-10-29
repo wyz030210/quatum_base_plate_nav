@@ -36,6 +36,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 add_executable(rtk_localization_node 
   src/car_location.cpp
   src/nmea_parser.cpp
+  src/source_evidence.cpp
   src/serial_reader.cpp
   src/coordinate_converter.cpp
 )
@@ -78,7 +79,7 @@ install(DIRECTORY launch
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
   ament_add_gtest(test_rtk_data test/test_rtk_data.cpp
-    src/nmea_parser.cpp src/serial_reader.cpp)
+    src/nmea_parser.cpp src/serial_reader.cpp src/source_evidence.cpp)
   target_include_directories(test_rtk_data PRIVATE include)
   ament_target_dependencies(test_rtk_data rclcpp)
   target_link_libraries(test_rtk_data util)

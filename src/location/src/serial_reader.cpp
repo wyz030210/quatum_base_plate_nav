@@ -50,6 +50,10 @@ bool SerialReader::connectSerial() {
     
     remaining_data_.clear();
     connected_ = true;
+    {
+        std::lock_guard<std::mutex> lock(data_mutex_);
+        evidence_.connect();
+    }
     std::cout << "Connected to " << port_ << " at " << baudrate_ << " baud" << std::endl;
     return true;
 }
@@ -65,6 +69,7 @@ void SerialReader::disconnectSerial() {
     remaining_data_.clear();
     std::lock_guard<std::mutex> lock(data_mutex_);
     current_data_.data_valid = false;
+    evidence_.disconnect();
 }
 
 //配置 Linux 串口的全部参数
@@ -237,6 +242,7 @@ void SerialReader::processNMEASentence(const std::string& sentence) {
     total_messages_++;
     
     std::lock_guard<std::mutex> lock(data_mutex_);
+    evidence_.observe(sentence);
     RTKData new_data = current_data_;
     
     if (NMEAParser::parseSentence(sentence, new_data)) {           //调用 parseSentence，只更新 new_data 中当前语句涉及的字段
@@ -252,8 +258,9 @@ void SerialReader::processNMEASentence(const std::string& sentence) {
 }
 
 //加锁返回最新数据的副本。car_location.cpp 主循环每次调用都拿一个完整快照。返回的是副本（不是引用），安全
-RTKData SerialReader::getLatestData() {
+RTKData SerialReader::getLatestData(RtkSourceState * evidence) {
     std::lock_guard<std::mutex> lock(data_mutex_);
+    if (evidence) *evidence = evidence_.snapshot();
     RTKData snapshot = current_data_;
     if (!connected_ || last_position_update_ == std::chrono::steady_clock::time_point{} ||
         std::chrono::steady_clock::now() - last_position_update_ > position_timeout) {
@@ -280,4 +287,9 @@ std::string SerialReader::getStatus() const {
     }
     
     return current_data_.rtk_status;                               //"RTK FIXED" / "RTK FLOAT" / "GPS" 等
+}
+
+RtkSourceState SerialReader::getSourceState() const {
+    std::lock_guard<std::mutex> lock(data_mutex_);
+    return evidence_.snapshot();
 }

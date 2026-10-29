@@ -11,6 +11,14 @@ class LocalizationState:
     source_age_sec: float
     error: str = ''
     source: str = ''
+    x: float = None
+    y: float = None
+    yaw: float = None
+    pose_stamp_sec: float = None
+    map_id: str = ''
+    localization_profile: str = ''
+    evidence_generation: int = 0
+    schema_version: int = 0
 
 
 @dataclass(frozen=True)
