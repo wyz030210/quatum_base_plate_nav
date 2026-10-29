@@ -1,0 +1,9 @@
+# Reserve/discard immutable settings for one existing OpenNav outer goal UUID.
+string goal_id
+string task_id
+string config_json
+bool discard
+---
+bool accepted
+string message
+string state_json
