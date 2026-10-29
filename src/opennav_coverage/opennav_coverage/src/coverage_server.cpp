@@ -54,6 +54,11 @@ CoverageServer::on_configure(const rclcpp_lifecycle::State & /*state*/)
   nav2_util::declare_parameter_if_not_declared(
     node, "path_boundary_margin", rclcpp::ParameterValue(0.03));
 
+  nav2_util::declare_parameter_if_not_declared(
+    node, "task_parameter_owner", rclcpp::ParameterValue(""));
+  nav2_util::declare_parameter_if_not_declared(
+    node, "task_parameter_release", rclcpp::ParameterValue(""));
+
   // If in GPS coordinates, we must convert to a CRS to compute coverage
   // Then, reconvert back to GPS for the user.
   nav2_util::declare_parameter_if_not_declared(
@@ -76,6 +81,9 @@ CoverageServer::on_configure(const rclcpp_lifecycle::State & /*state*/)
     std::chrono::milliseconds(500),
     true, server_options);
 
+  // Keep the ownership guard installed while configured, including inactive.
+  dyn_params_handler_ = node->add_on_set_parameters_callback(
+    std::bind(&CoverageServer::dynamicParametersCallback, this, _1));
   return nav2_util::CallbackReturn::SUCCESS;
 }
 
@@ -87,10 +95,6 @@ CoverageServer::on_activate(const rclcpp_lifecycle::State & /*state*/)
   action_server_->activate();
   visualizer_->activate(node);
 
-  // Add callback for dynamic parameters
-  dyn_params_handler_ = node->add_on_set_parameters_callback(
-    std::bind(&CoverageServer::dynamicParametersCallback, this, _1));
-
   // create bond connection
   createBond();
 
@@ -101,9 +105,12 @@ nav2_util::CallbackReturn
 CoverageServer::on_deactivate(const rclcpp_lifecycle::State & /*state*/)
 {
   RCLCPP_INFO(get_logger(), "Deactivating %s", get_name());
+  if (!get_parameter("task_parameter_owner").as_string().empty()) {
+    RCLCPP_WARN(get_logger(), "Refusing deactivation while task planner settings are leased.");
+    return nav2_util::CallbackReturn::FAILURE;
+  }
   action_server_->deactivate();
   visualizer_->deactivate();
-  dyn_params_handler_.reset();
 
   // destroy bond connection
   destroyBond();
@@ -115,6 +122,7 @@ nav2_util::CallbackReturn
 CoverageServer::on_cleanup(const rclcpp_lifecycle::State & /*state*/)
 {
   RCLCPP_INFO(get_logger(), "Cleaning up %s", get_name());
+  dyn_params_handler_.reset();
   action_server_.reset();
   visualizer_.reset();
   path_gen_.reset();
@@ -332,6 +340,42 @@ CoverageServer::dynamicParametersCallback(std::vector<rclcpp::Parameter> paramet
 {
   std::lock_guard<std::mutex> lock(dynamic_params_lock_);
   rcl_interfaces::msg::SetParametersResult result;
+  const auto owner = get_parameter("task_parameter_owner").as_string();
+  std::string requested_owner;
+  std::string release;
+  bool has_owner = false;
+  for (const auto & parameter : parameters) {
+    if (parameter.get_name() == "task_parameter_owner" ||
+      parameter.get_name() == "task_parameter_release")
+    {
+      if (parameter.get_type() != ParameterType::PARAMETER_STRING) {
+        result.reason = "Task parameter ownership must be a string.";
+        result.successful = false;
+        return result;
+      }
+      if (parameter.get_name() == "task_parameter_owner") {
+        has_owner = true;
+        requested_owner = parameter.as_string();
+      } else {
+        release = parameter.as_string();
+      }
+    }
+  }
+  if (!owner.empty()) {
+    // Atomic release must prove the same owner. Ordinary CLI edits, renewal
+    // with changed settings, and takeover by another task all fail closed.
+    result.successful = parameters.size() == 2 && has_owner &&
+      requested_owner.empty() && release == owner;
+    result.reason = result.successful ? "" : "Coverage planner settings leased by an active task.";
+    return result;
+  }
+  if (has_owner && (requested_owner.size() != 32 ||
+    requested_owner.find_first_not_of("0123456789abcdef") != std::string::npos))
+  {
+    result.successful = false;
+    result.reason = "Task parameter owner must be the outer goal UUID.";
+    return result;
+  }
   for (const auto & parameter : parameters) {
     if (parameter.get_name() == "swath_spacing" &&
       (parameter.get_type() != ParameterType::PARAMETER_DOUBLE ||
@@ -347,7 +391,13 @@ CoverageServer::dynamicParametersCallback(std::vector<rclcpp::Parameter> paramet
     const auto & name = parameter.get_name();
 
     if (type == ParameterType::PARAMETER_DOUBLE) {
-      if (name == "default_headland_width") {
+      if (name == "min_turning_radius") {
+        robot_params_->getRobot().setMinTurningRadius(parameter.as_double());
+      } else if (name == "linear_curv_change") {
+        robot_params_->getRobot().setMaxDiffCurv(parameter.as_double());
+      } else if (name == "default_decomp_split_angle") {
+        decomp_gen_->setSplitAngle(parameter.as_double());
+      } else if (name == "default_headland_width") {
         headland_gen_->setWidth(parameter.as_double());
       } else if (name == "default_swath_angle") {
         swath_gen_->setSwathAngle(parameter.as_double());
@@ -369,7 +419,9 @@ CoverageServer::dynamicParametersCallback(std::vector<rclcpp::Parameter> paramet
         robot.setCovWidth(parameter.as_double());
       }
     } else if (type == ParameterType::PARAMETER_STRING) {
-      if (name == "default_headland_type") {
+      if (name == "default_decomp_type") {
+        decomp_gen_->setMode(parameter.as_string());
+      } else if (name == "default_headland_type") {
         headland_gen_->setMode(parameter.as_string());
       } else if (name == "default_path_type") {
         path_gen_->setPathMode(parameter.as_string());
@@ -383,7 +435,9 @@ CoverageServer::dynamicParametersCallback(std::vector<rclcpp::Parameter> paramet
         swath_gen_->setSwathAngleMode(parameter.as_string());
       }
     } else if (type == ParameterType::PARAMETER_BOOL) {
-      if (name == "default_allow_overlap") {
+      if (name == "default_generate_decomp") {
+        default_generate_decomp_ = parameter.as_bool();
+      } else if (name == "default_allow_overlap") {
         swath_gen_->setOVerlap(parameter.as_bool());
       } else if (name == "coordinates_in_cartesian_frame") {
         cartesian_frame_ = parameter.as_bool();

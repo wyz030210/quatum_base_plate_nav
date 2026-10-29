@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import math
+import json
 import threading
 import time
 from pathlib import Path
@@ -27,7 +28,13 @@ from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalRespons
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from std_msgs.msg import Bool
+from std_msgs.msg import Bool, String
+from rcl_interfaces.msg import SetParametersResult
+from rcl_interfaces.srv import GetParameters, SetParametersAtomically
+from nav2_mission_interfaces.srv import PrepareCoverage
+from .coverage_task import prepare_coverage, finite
+from .coverage_bridge_state import BridgeRun, DeferredTerminal, child_ids, path_json
+from .task_ros_adapters import decode_json
 from tf2_ros import Buffer, TransformListener
 
 
@@ -182,7 +189,7 @@ class CoverageNavPathBridge(Node):
 
         self._callback_group = ReentrantCallbackGroup()
         self._tf_buffer = Buffer()
-        self._tf_listener = TransformListener(self._tf_buffer, self, spin_thread=True)
+        self._tf_listener = TransformListener(self._tf_buffer, self, spin_thread=False)
 
         self._coverage_client = ActionClient(
             self,
@@ -218,6 +225,21 @@ class CoverageNavPathBridge(Node):
 
         self._active_goal_lock = threading.Lock()
         self._active_goal = False
+
+        self._prepared = None
+        self._run = None
+        self._state_pub = self.create_publisher(String, '/coverage/execution_state', 10)
+        self._prepare_service = self.create_service(
+            PrepareCoverage, '/coverage/prepare', self._prepare_coverage,
+            callback_group=self._callback_group)
+        self.declare_parameter('planner_node_name', '/coverage_server')
+        planner = self.get_parameter('planner_node_name').value.rstrip('/')
+        self._planner_set = self.create_client(
+            SetParametersAtomically, planner + '/set_parameters_atomically',
+            callback_group=self._callback_group)
+        self._planner_get = self.create_client(
+            GetParameters, planner + '/get_parameters', callback_group=self._callback_group)
+        self.add_on_set_parameters_callback(self._guard_parameters)
 
         # ── 安全层（方案 §4.4）──────────────────────────────────
         # 背景：本工作区【没有】任何 ROS 侧急停/看门狗 —— cmd_vel_to_can_node
@@ -271,6 +293,52 @@ class CoverageNavPathBridge(Node):
         self._follow_path_client.destroy()
         self._navigate_to_pose_client.destroy()
         return super().destroy_node()
+
+    def _guard_parameters(self, parameters):
+        with self._active_goal_lock:
+            busy = self._active_goal or self._prepared is not None
+        return SetParametersResult(successful=not busy,
+                                   reason='coverage settings frozen while reserved or active' if busy else '')
+
+    def _prepare_coverage(self, request, response):
+        with self._active_goal_lock:
+            if request.discard:
+                if self._active_goal:
+                    response.message = 'outer goal ownership pending'
+                elif self._prepared is None or self._prepared['goal_id'] == request.goal_id:
+                    self._prepared = None
+                    response.accepted = True
+                return response
+            if self._active_goal or self._prepared is not None:
+                response.message = 'coverage bridge reserved or active'
+                return response
+            try:
+                ids = child_ids(request.goal_id)
+                config = prepare_coverage(decode_json(request.config_json))
+                if not request.task_id:
+                    raise ValueError('task id is required')
+                self._prepared = dict(goal_id=request.goal_id, task_id=request.task_id, config=config)
+                response.accepted = True
+                response.state_json = json.dumps(dict(
+                    goal_id=request.goal_id, task_id=request.task_id, phase='preparing',
+                    owned_goal_ids=ids, config=config), allow_nan=False)
+            except (ValueError, TypeError, KeyError) as exc:
+                response.message = str(exc)
+        return response
+
+    def _send_owned(self, client, goal, outer, stage):
+        if getattr(self, '_run', None) is None:
+            return client.send_goal_async(goal)
+        if outer.is_cancel_requested or self._safety_abort_active():
+            raise RuntimeError('coverage stopped before child dispatch')
+        return self._run.send(client, goal, stage)
+
+    def _owned_result(self, handle):
+        return self._run.result_for(handle) if getattr(self, '_run', None) is not None else handle.get_result_async()
+
+    def _emit(self, phase, **values):
+        if getattr(self, '_run', None) is not None:
+            self._run.emit(phase, **values)
 
     def _goal_callback(self, _goal_request: NavigateCompleteCoverage.Goal) -> GoalResponse:
         with self._active_goal_lock:
@@ -366,7 +434,55 @@ class CoverageNavPathBridge(Node):
             f"frame(s) on {self._cmd_vel_topic}."
         )
 
-    def _execute_callback(self, goal_handle) -> NavigateCompleteCoverage.Result:
+    def _execute_callback(self, goal_handle):
+        goal_id = bytes(goal_handle.goal_id.uuid).hex()
+        with self._active_goal_lock:
+            prepared = self._prepared
+            if prepared is not None and prepared['goal_id'] != goal_id:
+                goal_handle.abort()
+                self._active_goal = False
+                return NavigateCompleteCoverage.Result(error_code=self.ERR_INVALID_TASK)
+        run = BridgeRun(self, goal_handle, prepared['config'] if prepared else None,
+                        prepared['task_id'] if prepared else '')
+        self._run = run
+        proxy = DeferredTerminal(goal_handle)
+        result = NavigateCompleteCoverage.Result(error_code=self.ERR_INVALID_TASK)
+        try:
+            run.acquire()
+            result = self._execute_path(proxy)
+        except Exception as exc:
+            self.get_logger().error(f'Coverage execution failed: {exc}')
+            run.emit(error=str(exc))
+            if goal_handle.is_cancel_requested:
+                result.error_code = self.ERR_CANCELED
+                proxy.canceled()
+            elif self._safety_abort_active():
+                result.error_code = self.ERR_SAFETY_ABORT
+                proxy.abort()
+            else:
+                proxy.abort()
+        finally:
+            # Stop the common command gate before waiting on any delayed inner
+            # cancellation/result or parameter release. Ownership still stays here.
+            failed = proxy.terminal != 'succeed'
+            run.emit('stopping', error_code=int(result.error_code),
+                     execution_failed=failed)
+            run.drain()
+            run.release()
+            self._publish_zero_velocity()
+            run.emit('stopping', error_code=int(result.error_code))
+            terminal = proxy.terminal
+            if terminal == 'canceled' and not goal_handle.is_cancel_requested:
+                terminal = 'abort'
+            getattr(goal_handle, terminal)()
+            with self._active_goal_lock:
+                self._active_goal = False
+                if self._prepared is prepared:
+                    self._prepared = None
+            self._run = None
+        return result
+
+    def _execute_path(self, goal_handle) -> NavigateCompleteCoverage.Result:
         result = NavigateCompleteCoverage.Result()
         result.error_code = NavigateCompleteCoverage.Result.NONE
 
@@ -405,7 +521,9 @@ class CoverageNavPathBridge(Node):
                 return result
 
             try:
-                frame_id, polygons = self._resolve_input(goal_handle.request)
+                frame_id, polygons = (
+                    (self._run.config['frame_id'], self._run.config['polygons'])
+                    if self._run.config else self._resolve_input(goal_handle.request))
             except Exception as exc:  # pylint: disable=broad-except
                 self.get_logger().error(f"Invalid coverage task: {exc}")
                 result.error_code = self.ERR_INVALID_TASK
@@ -417,7 +535,9 @@ class CoverageNavPathBridge(Node):
                 f"Sending ComputeCoveragePath goal: polygons={len(polygons)}, frame_id={frame_id}"
             )
 
-            send_compute_future = self._coverage_client.send_goal_async(compute_goal)
+            self._emit('planning')
+            send_compute_future = self._send_owned(
+                self._coverage_client, compute_goal, goal_handle, 'compute')
             wait_status = self._wait_future(
                 send_compute_future,
                 self._server_wait_timeout_sec,
@@ -438,7 +558,7 @@ class CoverageNavPathBridge(Node):
                 goal_handle.abort()
                 return result
 
-            compute_result_future = coverage_goal_handle.get_result_async()
+            compute_result_future = self._owned_result(coverage_goal_handle)
             wait_status = self._wait_future(
                 compute_result_future,
                 self._compute_timeout_sec,
@@ -486,6 +606,14 @@ class CoverageNavPathBridge(Node):
                 goal_handle.abort()
                 return result
 
+            invalid = self._path_error(compute_result.nav_path, frame_id)
+            if invalid:
+                self._emit('validating', error=invalid)
+                result.error_code = self.ERR_UNSAFE_NAV_PATH
+                goal_handle.abort()
+                return result
+            self._emit('validating', planned_path=path_json(compute_result.nav_path))
+
             # 先把车导航到覆盖路径的起点（否则 MPPI 因路径落在 local costmap
             # 窗口外而报 "Resulting plan has 0 poses" 并 abort）
             if not self._validate_nav_path(compute_result.nav_path, goal_handle, result):
@@ -495,6 +623,12 @@ class CoverageNavPathBridge(Node):
             if not self._validate_nav_path(compute_result.nav_path, goal_handle, result):
                 return result
 
+            if self._abort_result_if_safety(goal_handle, result):
+                return result
+            if goal_handle.is_cancel_requested:
+                result.error_code = self.ERR_CANCELED
+                goal_handle.canceled()
+                return result
             follow_goal = FollowPath.Goal()
             follow_path = compute_result.nav_path
             if self._trim_path_to_robot:
@@ -514,7 +648,9 @@ class CoverageNavPathBridge(Node):
                 f"Sending FollowPath goal with poses={len(follow_goal.path.poses)}"
             )
 
-            send_follow_future = self._follow_path_client.send_goal_async(follow_goal)
+            self._emit('following')
+            send_follow_future = self._send_owned(
+                self._follow_path_client, follow_goal, goal_handle, 'follow')
             wait_status = self._wait_future(
                 send_follow_future,
                 self._server_wait_timeout_sec,
@@ -535,7 +671,7 @@ class CoverageNavPathBridge(Node):
                 goal_handle.abort()
                 return result
 
-            follow_result_future = follow_goal_handle.get_result_async()
+            follow_result_future = self._owned_result(follow_goal_handle)
             wait_status = self._wait_future(
                 follow_result_future,
                 self._follow_timeout_sec,
@@ -575,10 +711,7 @@ class CoverageNavPathBridge(Node):
             goal_handle.abort()
             return result
         finally:
-            self._cancel_goal(coverage_goal_handle)
-            self._cancel_goal(follow_goal_handle)
-            with self._active_goal_lock:
-                self._active_goal = False
+            pass  # Outer execution retains ownership and drains children before returning.
 
     def _finish_wait_failure(
         self,
@@ -787,6 +920,21 @@ class CoverageNavPathBridge(Node):
             goal.polygons.append(coords)
         return goal
 
+    @staticmethod
+    def _path_error(path, frame_id):
+        if path.header.frame_id != frame_id:
+            return 'planned path frame does not match frozen coverage frame'
+        for pose in path.poses:
+            if pose.header.frame_id and pose.header.frame_id != frame_id:
+                return 'planned pose frame does not match frozen coverage frame'
+            p, q = pose.pose.position, pose.pose.orientation
+            if not all(finite(value) for value in (p.x, p.y, p.z, q.x, q.y, q.z, q.w)):
+                return 'planned path contains nonfinite coordinates'
+            norm = math.hypot(q.x, q.y, q.z, q.w)
+            if not math.isclose(norm, 1.0, abs_tol=0.001):
+                return 'planned path contains invalid quaternion'
+        return ''
+
     def _validate_nav_path(self, nav_path: NavPathMsg, goal_handle, result) -> bool:
         if not self.get_parameter("validate_path_costmap").value:
             return True
@@ -911,24 +1059,20 @@ class CoverageNavPathBridge(Node):
         nav_goal = NavigateToPose.Goal()
         nav_goal.pose = target
 
-        send_future = self._navigate_to_pose_client.send_goal_async(nav_goal)
+        self._emit('approaching')
+        send_future = self._send_owned(
+            self._navigate_to_pose_client, nav_goal, goal_handle, 'approach')
         wait_status = self._wait_future(
             send_future, self._server_wait_timeout_sec, goal_handle
         )
         if wait_status == self.WAIT_ABORTED:
-            send_future.add_done_callback(
-                lambda future: self._cancel_goal(future.result()))
             self._abort_result_if_safety(goal_handle, result)
             return False
         if wait_status == self.WAIT_CANCELED:
-            send_future.add_done_callback(
-                lambda future: self._cancel_goal(future.result()))
             result.error_code = self.ERR_CANCELED
             goal_handle.canceled()
             return False
         if wait_status != self.WAIT_DONE:
-            send_future.add_done_callback(
-                lambda future: self._cancel_goal(future.result()))
             self.get_logger().error("Timed out waiting for NavigateToPose goal response.")
             result.error_code = self.ERR_APPROACH_FAILED
             goal_handle.abort()
@@ -941,7 +1085,7 @@ class CoverageNavPathBridge(Node):
             goal_handle.abort()
             return False
 
-        nav_result_future = nav_handle.get_result_async()
+        nav_result_future = self._owned_result(nav_handle)
         wait_status = self._wait_future(
             nav_result_future,
             self._navigate_to_start_timeout_sec,
@@ -1053,13 +1197,10 @@ class CoverageNavPathBridge(Node):
         if goal_handle is None:
             return
         try:
-            cancel_future = goal_handle.cancel_goal_async()
+            goal_handle.cancel_goal_async()
         except Exception:  # pylint: disable=broad-except
             return
 
-        deadline = time.monotonic() + 2.0
-        while rclpy.ok() and not cancel_future.done() and time.monotonic() < deadline:
-            time.sleep(0.05)
 
 
 def main(args=None) -> None:
