@@ -73,7 +73,10 @@ def generate_launch_description():
         DeclareLaunchArgument("minimum_turning_radius", default_value="0.95"),
         Node(
             package="rviz2", executable="rviz2", name="rviz2",
-            arguments=["-d", PythonExpression(["'", os.path.join(package_dir, "rviz", "map_task.rviz"), "' if '", LaunchConfiguration("use_task_control"), "'.lower() in ('true', '1') else '", os.path.join(package_dir, "rviz", "map.rviz"), "'"])],
+            arguments=["-d", PythonExpression([
+                "'", os.path.join(package_dir, "rviz", "map_task.rviz"), "' if '",
+                LaunchConfiguration("use_task_control"), "'.lower() in ('true', '1') else '",
+                os.path.join(package_dir, "rviz", "map.rviz"), "'"])],
             condition=IfCondition(config("use_rviz")), output="screen",
         ),
         Node(

@@ -57,7 +57,8 @@ def generate_launch_description():
             name='cmd_vel_to_can_node',
             output='screen',
             parameters=[LaunchConfiguration('command_safety_params'), {
-                'use_sim_time': ParameterValue(LaunchConfiguration('use_sim_time'), value_type=bool),
+                'use_sim_time': ParameterValue(
+                    LaunchConfiguration('use_sim_time'), value_type=bool),
                 'task_control_required': ParameterValue(
                     LaunchConfiguration('task_control_required'), value_type=bool),
                 'wheel_base': ParameterValue(wheel_base, value_type=float),
