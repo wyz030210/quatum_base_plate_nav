@@ -35,6 +35,7 @@ class TaskControlNode(Node):
             'coverage_prepare_service': '/coverage/prepare',
             'coverage_state_topic': '/coverage/execution_state',
             'localization_topic': '/task_control/localization',
+            'map_id': '', 'localization_profile': '', 'require_localization_schema': False,
             'report_dir': os.path.expanduser('~/.ros/task_reports'),
             'state_timeout_sec': 1.0, 'cancel_timeout_sec': 5.0, 'task_timeout_sec': 600.0,
         }
@@ -56,7 +57,10 @@ class TaskControlNode(Node):
             self.navigation_adapter,
             RosLocalization(self, param('localization_topic')), self.stop_adapter,
             param('report_dir'), state_timeout=param('state_timeout_sec'),
-            cancel_timeout=param('cancel_timeout_sec'), task_timeout=param('task_timeout_sec'), motion_guard=self.ownership)
+            cancel_timeout=param('cancel_timeout_sec'), task_timeout=param('task_timeout_sec'),
+            map_id=param('map_id'), localization_profile=param('localization_profile'),
+            require_localization_schema=param('require_localization_schema'),
+            motion_guard=self.ownership)
         self.coverage_adapter = RosCoverage(
             self, param('coverage_action_name'), param('coverage_prepare_service'),
             param('coverage_state_topic'), ownership=self.ownership)

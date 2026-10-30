@@ -14,8 +14,11 @@ from .task_adapters import ExecutionUpdate, LocalizationState, StopState
 
 
 def finite_number(value):
-    return (not isinstance(value, bool) and isinstance(value, (int, float)) and
-            math.isfinite(value))
+    try:
+        return (not isinstance(value, bool) and isinstance(value, (int, float)) and
+                math.isfinite(value))
+    except OverflowError:
+        return False
 
 
 def decode_json(text):
@@ -41,12 +44,32 @@ class RosLocalization:
             data = decode_json(message.data)
             if type(data['valid']) is not bool or not isinstance(data['frame_id'], str):
                 raise ValueError('invalid localization validity/frame')
-            if not all(finite_number(data[k]) for k in ('source_stamp_sec', 'x', 'y', 'yaw')):
-                raise ValueError('invalid localization source timestamp/pose')
-            source_age = self.node.get_clock().now().nanoseconds / 1e9 - data['source_stamp_sec']
-            self.state = LocalizationState(data['valid'], data['frame_id'], now,
-                                           source_age, str(data.get('error', '')),
-                                           str(data.get('source', '')))
+            schema = data.get('schema_version', 0)
+            if schema not in (0, 1):
+                raise ValueError('unsupported localization schema')
+            if data['valid'] and not all(finite_number(data[k]) for k in ('x', 'y', 'yaw')):
+                raise ValueError('invalid localization pose')
+            if schema == 1:
+                age = data.get('source_age_sec')
+                if data['valid'] and (not finite_number(age) or age < 0):
+                    raise ValueError('invalid original measurement age')
+                source_age = age if finite_number(age) else math.inf
+                for key in ('map_id', 'localization_profile'):
+                    if not isinstance(data.get(key), str) or not data[key]:
+                        raise ValueError('missing localization context')
+                if type(data.get('evidence_generation')) is not int:
+                    raise ValueError('invalid localization evidence generation')
+            else:
+                if not finite_number(data.get('source_stamp_sec')):
+                    raise ValueError('invalid localization source timestamp')
+                source_age = (self.node.get_clock().now().nanoseconds / 1e9 -
+                              data['source_stamp_sec'])
+            self.state = LocalizationState(
+                data['valid'], data['frame_id'], now, source_age,
+                str(data.get('error', '')), str(data.get('source', '')),
+                data.get('x'), data.get('y'), data.get('yaw'), data.get('pose_stamp_sec'),
+                str(data.get('map_id', '')), str(data.get('localization_profile', '')),
+                data.get('evidence_generation', 0), schema)
         except (KeyError, ValueError, TypeError) as exc:
             self.state = LocalizationState(False, '', now, math.inf, str(exc))
 

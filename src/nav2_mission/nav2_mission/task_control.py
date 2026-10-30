@@ -21,6 +21,7 @@ class TaskManager:
 
     def __init__(self, navigation, localization, stop, report_dir, *, clock=time.monotonic,
                  handlers=None, state_timeout=1.0, cancel_timeout=5.0, task_timeout=600.0,
+                 map_id='', localization_profile='', require_localization_schema=False,
                  motion_guard=None):
         self.motion_guard = motion_guard
         self.localization = localization
@@ -35,6 +36,9 @@ class TaskManager:
         self.state_timeout = state_timeout
         self.cancel_timeout = cancel_timeout
         self.task_timeout = task_timeout
+        self.map_id = map_id
+        self.localization_profile = localization_profile
+        self.require_localization_schema = require_localization_schema
         self.current = None
         self.operation = None
         self.active = False
@@ -53,21 +57,33 @@ class TaskManager:
             return {'accepted': False, 'task_id': '', 'message': 'unsupported task type'}
         try:
             handler = self.handlers[task_type]
+            request = copy.deepcopy(request)
+            context = {}
+            for key, expected in (('map_id', self.map_id),
+                                  ('localization_profile', self.localization_profile)):
+                requested = request.pop(key, expected)
+                if not isinstance(requested, str) or (expected and requested != expected):
+                    raise ValueError(f'{key} mismatch')
+                context[key] = requested
             config = handler.prepare(request)
             details = (handler.initial_details(config)
                        if hasattr(handler, 'initial_details') else {})
         except Exception as exc:
             return {'accepted': False, 'task_id': '', 'message': str(exc)}
         now = self.clock()
-        loc_error = self._localization_error(config, now)
+        loc_error = self._localization_error(config, now, context)
         safety = self._stop_state(now)
         if (loc_error or not self._safety_fresh(safety, now) or
                 not self._safety_permits(safety) or not safety.stopped or
                 not safety.stop_requested):
             return {'accepted': False, 'task_id': '',
                     'message': loc_error or safety.fault or 'stop layer not ready'}
+        loc = self.localization.snapshot(now)
+        context.update(map_id=loc.map_id, localization_profile=loc.localization_profile,
+                       source=loc.source, evidence_generation=loc.evidence_generation)
         task_id = uuid.uuid4().hex
         self.current = {'task_id': task_id, 'task_type': task_type, 'config': config,
+                        'localization_context': context,
                         'phase': 'dependency_check', 'result': None, 'error': '',
                         'report_error': '', 'report_path': '',
                         'simulated': task_type == 'inspection',
@@ -116,7 +132,7 @@ class TaskManager:
             return StopState(False, False, True, now, None,
                              fault=f'stop transport error: {exc}')
 
-    def _localization_error(self, config, now):
+    def _localization_error(self, config, now, context=None):
         try:
             loc = self.localization.snapshot(now)
         except Exception as exc:
@@ -125,6 +141,11 @@ class TaskManager:
                 not 0 <= now - loc.received_at <= self.state_timeout or
                 not 0 <= loc.source_age_sec <= self.state_timeout):
             return loc.error or 'localization invalid, stale or frame mismatch'
+        if self.require_localization_schema and loc.schema_version != 1:
+            return 'localization provider schema 1 required'
+        for key, expected in (context or {}).items():
+            if expected not in ('', None) and getattr(loc, key) != expected:
+                return f'localization context changed: {key}'
         return ''
 
     def _safety_fresh(self, safety, now):
@@ -165,7 +186,8 @@ class TaskManager:
         now = self.clock()
         safety = self._stop_state(now)
         if self.stopping_at is None:
-            error = self._localization_error(self.current['config'], now)
+            error = self._localization_error(self.current['config'], now,
+                                             self.current['localization_context'])
             if self.motion_guard is not None:
                 self.current['motion_ownership'] = self.motion_guard.snapshot()
                 error = self.motion_guard.error() or error
