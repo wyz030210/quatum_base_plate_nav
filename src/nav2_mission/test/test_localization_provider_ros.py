@@ -295,6 +295,8 @@ def test_unrepresentable_source_age_is_invalid_without_crashing_provider(provide
 
 
 def test_indoor_launch_defaults_reach_ready_with_matching_amcl():
+    import os
+    import signal
     import subprocess
     import sys
     from pathlib import Path
@@ -315,7 +317,8 @@ def test_indoor_launch_defaults_reach_ready_with_matching_amcl():
     executor.add_node(node)
     process = subprocess.Popen(
         [sys.executable, str(Path(__file__).with_name('indoor_provider_launch_fixture.py')),
-         map_digest(sensors.grid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+         map_digest(sensors.grid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=True)
     try:
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
@@ -327,8 +330,29 @@ def test_indoor_launch_defaults_reach_ready_with_matching_amcl():
         assert sensors.states and sensors.states[-1]['valid'], sensors.states[-3:]
         assert sensors.states[-1]['base_frame_id'] == amcl['base_frame_id']
     finally:
-        process.terminate()
-        process.wait(timeout=10)
+        # The launch action spawns a provider child. Signal the isolated
+        # process group so the launch service can reap it before exiting.
+        try:
+            os.killpg(process.pid, signal.SIGINT)
+        except ProcessLookupError:
+            pass
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=10)
+        deadline = time.monotonic() + 5
+        group_alive = True
+        while time.monotonic() < deadline:
+            try:
+                os.killpg(process.pid, 0)
+            except ProcessLookupError:
+                group_alive = False
+                break
+            time.sleep(0.05)
+        if group_alive:
+            os.killpg(process.pid, signal.SIGKILL)
         executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
+        assert not group_alive, 'indoor launch left a process in its session'
