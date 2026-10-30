@@ -168,7 +168,19 @@ def test_late_first_valid_pose_does_not_hide_missing_initial_trace(coverage_syst
     assert statistics['trace_gap_count'] == 1 and not statistics['trace_complete']
 
 
+def curved_branch_polygon():
+    import math
+    from shapely.geometry import LineString, Polygon
+
+    room = Polygon([(0, 0), (4, 0), (4, 4), (0, 4)])
+    arc = LineString([(3.8 + 1.8 * math.cos(i * math.pi / 32),
+                       2 + 1.8 * math.sin(i * math.pi / 32))
+                      for i in range(-16, 1)])
+    return [list(room.union(arc.buffer(0.1)).exterior.coords)[:-1]]
+
+
 @pytest.mark.parametrize('polygons,planner', [
+    (curved_branch_polygon(), {'operation_width': 0.6}),
     ([[[0, 0], [4, 4], [0, 4], [4, 0]]], {}),
     ([[[0, 0], [8, 0], [8, 8], [0, 8]], [[7, 7], [9, 7], [9, 9], [7, 9]]], {}),
     ([[[0, 0], [8, 0], [8, 8], [0, 8]], [[0, 2], [1, 1], [1, 3]]], {}),
@@ -179,6 +191,12 @@ def test_late_first_valid_pose_does_not_hide_missing_initial_trace(coverage_syst
     ([[[0, 0], [8, 0], [8, 0.2], [0, 0.2]]], {'operation_width': 0.7}),
     ([[[0, 0], [4, 0], [4, 1.9], [6, 1.9], [6, 2.1], [4, 2.1], [4, 4], [0, 4]]],
      {'operation_width': 0.6}),
+    ([[[0, 0], [4, 0], [4, 1.85], [6, 1.9], [6, 2.1], [4, 2.15], [4, 4], [0, 4]]],
+     {'operation_width': 0.6}),
+    ([[[0, 0], [4, 0], [4, 1.9], [4.2, 1.9], [4.2, 2.1], [4, 2.1], [4, 4], [0, 4]]],
+     {'operation_width': 0.6}),
+    ([[[0, 0], [4, 0], [4, 1.8], [5, 1.8], [5.2, 2], [5.2, 3],
+       [5, 3], [5, 2.2], [4.8, 2], [4, 2], [4, 4], [0, 4]]], {'operation_width': 0.6}),
     ([[[0, 0], [8, 0], [8, 8], [0, 8]]], {'default_swath_angle': 3.5}),
 ])
 def test_direct_start_and_bridge_preparation_share_editor_geometry_rejection(

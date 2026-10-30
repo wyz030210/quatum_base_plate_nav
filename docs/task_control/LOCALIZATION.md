@@ -45,6 +45,14 @@ Provider parameters (all logged at startup):
 | `rtk_datum_lat`, `rtk_datum_lon` | 29.4898045, 106.5676103 |
 | `rtk_calibration_id` | `east_clockwise_ant0.319`, the existing driver's convention |
 
+The indoor vehicle launch overrides the provider `base_frame_id` to `base_link`,
+matching its default AMCL parameter file. It does not expose or synchronize a
+custom AMCL parameter file with the provider. If a different `params_file`
+reaches the included Nav2 launch, the provider still expects `base_link` and
+its configured `map`, `odom`, and 1.0 s AMCL transform tolerance. A mismatch in
+live AMCL parameters makes localization invalid and blocks task admission;
+custom frame/tolerance profiles require explicit integration and verification.
+
 Topic names are standard ROS names and may be remapped as one consistent profile:
 
 | Input | Type / requirement |
