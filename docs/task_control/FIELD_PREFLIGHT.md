@@ -46,7 +46,8 @@ actual datum/heading registration, physical geometry, measured stopping results,
 and all unexecuted field cases null or `not_run`/`blocked` until observed.
 
 Before any later vehicle operation, the responsible operator must establish the
-site conditions and independently review the current [localization](LOCALIZATION.md),
+site conditions and independently review [vehicle task operation](VEHICLE_OPERATION.md),
+the current [localization](LOCALIZATION.md),
 [inspection](INSPECTION.md), [coverage](COVERAGE.md), task control and vehicle
 safety instructions. Record software regression commands, versions, exit codes,
 logs and the source/installed-build provenance in `software_checks` separately
