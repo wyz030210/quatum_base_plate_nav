@@ -36,7 +36,7 @@ class ReferenceOperation:
         self.region = RegionSnapshot(
             tuple(Point2D(*p) for p in config['polygons'][0]),
             tuple(tuple(Point2D(*p) for p in ring) for ring in config['polygons'][1:]))
-        self.width = config['planner'].get('operation_width', 0.60)
+        self.width = None  # The planner lease supplies the authoritative value.
         self.distance = DistanceAccumulator()
         self.trace, self.coverage_segments = [], []
         self.current_segment = None
@@ -46,6 +46,7 @@ class ReferenceOperation:
         self.last_identity = None
         self.gaps = 0
         self.in_gap = True
+        self.gap_observed = False
         self.done = False
         self.completion = None
         self.area = 0.0
@@ -55,8 +56,9 @@ class ReferenceOperation:
         self.owned.cancel()
 
     def gap(self):
-        if not self.in_gap:
+        if not self.in_gap or not self.gap_observed:
             self.gaps += 1
+        self.gap_observed = True
         self.in_gap = True
         self.current_segment = None
         self.distance.reset_segment()
@@ -108,16 +110,22 @@ class ReferenceOperation:
         self.phase = update.phase
         self.done = update.done
         details = copy.deepcopy(update.details)
+        width = details.get('effective_planner', {}).get('operation_width')
+        if valid_coordinate(width) and width > 0 and width != self.width:
+            self.width = width
+            self.dirty = True
         planned = details.get('planned_path') or {}
         length = polyline_length((p['x'], p['y']) for p in planned.get('poses', []))
         remaining = details.get('feedback', {}).get('distance_remaining')
-        if self.phase == 'following' and isinstance(remaining, (int, float)):
+        if (self.phase == 'following' and details.get('feedback', {}).get('stage') == 'follow'
+                and valid_coordinate(remaining)):
             self.completion = path_completion(length, remaining) if length else None
-        if self.dirty:
+        if self.dirty and self.width is not None:
             self.area = covered_segments_area_ratio(
                 self.coverage_segments, self.region, self.width)
             self.dirty = False
         details['reference_statistics'] = {
+            'operation_width_m': self.width,
             'planned_path_length_m': length, 'path_completion_ratio': self.completion,
             'trace_estimated_area_ratio': self.area,
             'trace_distance_m': self.distance.distance,

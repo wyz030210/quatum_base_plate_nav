@@ -58,6 +58,16 @@ def coverage_system(tmp_path, request):
                 'release_terminal': threading.Event(), 'reject': '', 'fail': '',
                 'invalid_check': 0, 'stop_confirmed': True, 'hold_parameters': False,
                 'parameters_started': threading.Event(), 'parameters_release': threading.Event()}
+    boundary['pose_evidence'] = {}
+    boundary['visuals'] = {}
+    from visualization_msgs.msg import MarkerArray
+    for topic, message_type in (
+            ('planned_path', Path), ('executed_trace', MarkerArray),
+            ('reference_statistics', String), ('region_markers', MarkerArray)):
+        fake.create_subscription(
+            message_type, '/coverage/' + topic,
+            lambda msg, topic=topic: boundary['visuals'].update({topic: msg}),
+            10, callback_group=group)
     stop = {'stop_requested': True}
     boundary['stop_state'] = stop
 
@@ -81,7 +91,7 @@ def coverage_system(tmp_path, request):
         loc_pub.publish(String(data=json.dumps({
             'valid': True, 'frame_id': 'map', 'source': 'fake_rtk',
             'source_stamp_sec': fake.get_clock().now().nanoseconds / 1e9,
-            'x': 0.0, 'y': 0.0, 'yaw': 0.0})))
+            'x': 0.0, 'y': 0.0, 'yaw': 0.0, **boundary['pose_evidence']})))
         state_pub.publish(String(data=json.dumps(dict(
             ready=True, stopped=stop['stop_requested'] and boundary['stop_confirmed'],
             manual_override=False, emergency_stop=False, fault='',

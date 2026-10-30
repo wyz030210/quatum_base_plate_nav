@@ -21,8 +21,9 @@ def main(args=None):
     cancel.add_argument('task_id', nargs='?', default='')
     commands.add_parser('status')
     region = commands.add_parser('region')
-    region.add_argument('operation', choices=['status', 'configure', 'point', 'undo', 'clear',
-                                           'close_outer', 'begin_hole', 'close_hole', 'start'])
+    region.add_argument('operation', choices=[
+        'status', 'configure', 'point', 'undo', 'clear',
+        'close_outer', 'begin_hole', 'close_hole', 'start'])
     region.add_argument('--request', default='{}', help='operation parameters as JSON object')
     options = parser.parse_args(args)
     if options.command == 'start':

@@ -5,7 +5,9 @@ import time
 from nav2_mission_interfaces.srv import RegionCommand, StartTask
 from geometry_msgs.msg import PointStamped
 
-from test_task_control_ros import ros_system
+import test_task_control_ros as task_test
+
+ros_system = task_test.ros_system
 
 
 def edit(call, operation, **payload):
@@ -46,7 +48,6 @@ def test_rviz_draft_close_hole_undo_and_atomic_active_edit_refusal(ros_system):
 def test_rviz_points_and_cli_operate_on_same_session(ros_system):
     import subprocess
     import sys
-    import rclpy
     from rclpy.node import Node
     call, _, _, _ = ros_system
     publisher_node = Node('rviz_point_tool_test')
@@ -68,8 +69,9 @@ def test_rviz_points_and_cli_operate_on_same_session(ros_system):
                 break
             time.sleep(0.02)
         assert len(state['polygons'][0]) == 4
-        result = subprocess.run([sys.executable, '-m', 'nav2_mission.task_cli',
-                                 'region', 'close_outer'], text=True, capture_output=True, timeout=10)
+        result = subprocess.run(
+            [sys.executable, '-m', 'nav2_mission.task_cli', 'region', 'close_outer'],
+            text=True, capture_output=True, timeout=10)
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout)['state']['valid']
         assert edit(call, 'clear').accepted

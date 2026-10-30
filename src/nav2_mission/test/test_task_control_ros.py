@@ -100,7 +100,28 @@ def ros_system(tmp_path, request):
         deadline = time.monotonic() + 5
         while not future.done() and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert future.done(), name
+        if not future.done():
+            nodes = fake.get_node_names_and_namespaces()
+            providers = []
+            for node_name, namespace in nodes:
+                try:
+                    services = fake.get_service_names_and_types_by_node(node_name, namespace)
+                    if any(service_name == name for service_name, _ in services):
+                        providers.append((node_name, namespace))
+                except Exception as exc:
+                    providers.append((node_name, namespace, str(exc)))
+            output = ''
+            if process is not None:
+                import os
+                for stream in (process.stdout, process.stderr):
+                    os.set_blocking(stream.fileno(), False)
+                    try:
+                        output += os.read(stream.fileno(), 65536).decode(errors='replace')
+                    except BlockingIOError:
+                        pass
+            pytest.fail(
+                f'{name}: response timeout; process={process.poll() if process else None}; '
+                f'providers={providers}; output={output}')
         result = future.result()
         fake.destroy_client(client)
         return result

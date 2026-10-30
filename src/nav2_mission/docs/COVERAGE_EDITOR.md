@@ -41,7 +41,19 @@ other or the outer ring, and regions whose width erosion is empty are rejected.
 The erosion tests feasibility; it does not alter the operator's boundary.
 Angles are radians within [-pi, pi]. Width must be finite and positive.
 The request's shared validator is also used by direct coverage requests and by
-the bridge, so CLI clients cannot bypass these constraints.
+the bridge, so CLI clients cannot bypass these constraints. Direct requests use
+`{"frame_id":"map","polygons":[[[0,0],[12,0],[12,12],[0,12]],[[8,8],[9,8],[9,9],[8,9]]],"planner":{"operation_width":0.7,"default_swath_angle":0.4}}`.
+The first ring is the outer boundary; subsequent rings are holes. Rings are
+normalized and closed without changing the selected area. If a direct request
+omits width, geometry is checked immediately and width feasibility is checked
+after the bridge acquires and reads the authoritative planner settings.
+
+Before any planning goal, the bridge repeats geometry/width validation against
+the leased effective width and checks that erosion by the effective headland
+plus half the operation width leaves usable area. Headland is applied only when
+the bridge requests its generation. These feasibility checks do not replace the
+planner or either existing complete-path validation. Vehicle width, turning
+radius and other fixed settings remain the configured planner's values.
 
 Visualization topics are `/coverage/region_markers`, `/coverage/planned_path`
 and `/coverage/executed_trace` (MarkerArray with one line per valid segment).
@@ -49,11 +61,16 @@ The accepted frozen region is displayed while a task is active. Progress and
 reference statistics appear in task status/reports and
 `/coverage/reference_statistics`. `path_completion_ratio` comes from the planned
 path length and controller remaining distance when available.
+It uses only FollowPath feedback, and preserves the last available value; a
+terminal success does not fabricate a final zero-distance feedback sample.
 `trace_estimated_area_ratio` buffers only observed coverage-phase trajectories
-by the frozen operation width and clips their union to the selected region,
+by the leased effective `operation_width_m` and clips their union to the selected region,
 excluding holes. It uses common localization JSON pose evidence in the task
-frame, checks source age/validity, splits on missing/invalid evidence, and reports
-sample and gap counts. It never draws a line across a data gap. These geometric
+frame, checks source and pose age/validity, and splits on missing/invalid evidence
+or changed source/map/profile/evidence identity. It reports sample and gap counts,
+including explicitly invalid evidence before the first valid sample, and
+`trace_complete=false` when data is absent or a gap was observed. It never draws
+a line across a data gap. These geometric
 reference estimates do not measure brush operation or cleaning quality and are
 not acceptance thresholds. `collision_count` is null because no collision
 measurement provider is configured.

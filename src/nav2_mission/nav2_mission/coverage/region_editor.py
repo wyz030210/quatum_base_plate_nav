@@ -51,7 +51,9 @@ def _normalize_ring(
 def validate_region(
     snapshot: RegionSnapshot, operation_width: float = 0.5
 ) -> Polygon:
-    if not valid_coordinate(operation_width) or operation_width <= 0.0:
+    if operation_width is not None and (
+        not valid_coordinate(operation_width) or operation_width <= 0.0
+    ):
         raise ValueError("operation_width must be positive")
     outer = _normalize_ring(snapshot.outer, counterclockwise=True)
     holes = tuple(
@@ -75,7 +77,7 @@ def validate_region(
         raise ValueError("region has no usable area")
     # An erosion is only a feasibility warning/check; the original polygon is
     # never altered or used as a replacement for the operator's boundary.
-    if polygon.buffer(-operation_width / 2.0).is_empty:
+    if operation_width is not None and polygon.buffer(-operation_width / 2.0).is_empty:
         raise ValueError("region is too narrow for the operation width")
     return polygon
 
