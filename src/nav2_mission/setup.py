@@ -27,6 +27,7 @@ setup(
             'localization_provider = nav2_mission.localization_provider_node:main',
             'task_control_node = nav2_mission.task_control_node:main',
             'task_control = nav2_mission.task_cli:main',
+            'field_preflight = nav2_mission.field_preflight:main',
             'patrol_mission_node = nav2_mission.patrol_mission_node:main',
             'facility_detection_node = nav2_mission.facility_detection_node:main',
             'coverage_navpath_bridge_node = nav2_mission.coverage_navpath_bridge_node:main',
