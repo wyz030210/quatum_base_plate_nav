@@ -71,13 +71,17 @@ def ros_system(tmp_path, request):
     process_mode = getattr(request, 'param', None) == 'process'
     node = None
     process = None
+    process_start_service = None
     if process_mode:
         import subprocess
         import sys
+        import uuid
+        process_start_service = f'/test_task/process_{uuid.uuid4().hex}/start'
         process = subprocess.Popen([
             sys.executable, '-m', 'nav2_mission.task_control_node', '--ros-args',
             '-p', 'navigate_action_name:=/test_task/navigate_to_pose',
             '-p', f'report_dir:={tmp_path}',
+            '-r', f'/task_control/start:={process_start_service}',
         ], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     else:
         node = TaskControlNode(parameter_overrides=[
@@ -94,13 +98,37 @@ def ros_system(tmp_path, request):
     thread.start()
 
     def call(service, name, request):
+        if process_start_service and name == '/task_control/start':
+            name = process_start_service
         client = fake.create_client(service, name)
         assert client.wait_for_service(timeout_sec=3)
         future = client.call_async(request)
         deadline = time.monotonic() + 5
         while not future.done() and time.monotonic() < deadline:
             time.sleep(0.01)
-        assert future.done(), name
+        if not future.done():
+            nodes = fake.get_node_names_and_namespaces()
+            providers = []
+            for node_name, namespace in nodes:
+                try:
+                    services = fake.get_service_names_and_types_by_node(node_name, namespace)
+                    if any(service_name == name for service_name, _ in services):
+                        providers.append((node_name, namespace))
+                except Exception as exc:
+                    providers.append((node_name, namespace, str(exc)))
+            output = ''
+            if process is not None:
+                import os
+                for stream in (process.stdout, process.stderr):
+                    os.set_blocking(stream.fileno(), False)
+                    try:
+                        output += os.read(stream.fileno(), 65536).decode(errors='replace')
+                    except BlockingIOError:
+                        pass
+            pytest.fail(
+                f'{name}: response timeout; process={process.poll() if process else None}; '
+                f'executor_thread_alive={thread.is_alive()}; context_ok={rclpy.ok()}; '
+                f'providers={providers}; output={output}')
         result = future.result()
         fake.destroy_client(client)
         return result
@@ -108,12 +136,22 @@ def ros_system(tmp_path, request):
     time.sleep(0.2)
     yield call, goals, commands, boundary
     if node is not None:
-        node.shutdown_tasks()
+        # Use the same serialized public control boundary while the executor is alive.
+        call(CancelTask, '/task_control/cancel', CancelTask.Request())
+        deadline = time.monotonic() + 7
+        while time.monotonic() < deadline:
+            state = json.loads(call(GetTaskStatus, '/task_control/status',
+                                    GetTaskStatus.Request()).status_json)
+            if not state['active']:
+                break
+            time.sleep(0.01)
+        assert not state['active'], 'task did not stop before fixture teardown'
     if process is not None and process.poll() is None:
         process.terminate()
         process.wait(timeout=7)
-    executor.shutdown(timeout_sec=2)
+    assert executor.shutdown(timeout_sec=7), 'executor callbacks did not finish'
     thread.join(timeout=2)
+    assert not thread.is_alive(), 'executor spin thread did not stop'
     server.destroy()
     if node is not None:
         node.destroy_node()
@@ -201,6 +239,20 @@ def test_ros_cancel_before_goal_acceptance_revokes_late_goal_and_isolates_next_t
         time.sleep(0.02)
     assert status['task_id'] == second.task_id and status['result'] == 'succeeded'
     assert len(goals) == 2
+
+
+def test_fixture_can_drain_an_active_navigation_goal(ros_system):
+    call, goals, _, boundary = ros_system
+    boundary['execute_time'] = 3.0
+    request = StartTask.Request(task_type='inspection', request_json=json.dumps({
+        'frame_id': 'map', 'point': {'id': 'cleanup', 'type': 'security',
+        'x': 1.0, 'y': 2.0, 'yaw': 0.0, 'stay_time': 0.0}}))
+    assert call(StartTask, '/task_control/start', request).accepted
+    deadline = time.monotonic() + 3
+    while not goals and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert goals
+    # Fixture teardown must cancel and drain this goal before destroying ROS entities.
 
 
 @pytest.mark.parametrize('ros_system', ['process'], indirect=True)
