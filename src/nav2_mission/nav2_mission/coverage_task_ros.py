@@ -14,7 +14,9 @@ from .task_ros_adapters import RosNavigationOperation, decode_json
 
 
 class RosCoverage:
-    def __init__(self, node, action, preparation, state_topic):
+    def __init__(self, node, action, preparation, state_topic, ownership=None):
+        self.ownership = ownership
+        self.action_name = action
         self.client = ActionClient(node, NavigateCompleteCoverage, action)
         self.preparation = node.create_client(PrepareCoverage, preparation)
         self.operations = {}
@@ -41,6 +43,14 @@ class CoverageOperation:
     def __init__(self, adapter, task_id, config):
         self.adapter, self.task_id = adapter, task_id
         self.goal_id = uuid.uuid4().hex
+        self.approach_id = None
+        if adapter.ownership is not None:
+            from .coverage_bridge_state import child_ids
+            ids = child_ids(self.goal_id)
+            adapter.ownership.register(adapter.action_name, self.goal_id)
+            self.approach_id = ids['approach']
+            adapter.ownership.register(adapter.ownership.navigate, self.approach_id)
+            adapter.ownership.register(adapter.ownership.follow, ids['follow'])
         self.config = copy.deepcopy(config)
         self.state = {'phase': 'preparing', 'goal_id': self.goal_id, 'task_id': task_id}
         self.prepared = adapter.preparation.call_async(PrepareCoverage.Request(
@@ -83,6 +93,12 @@ class CoverageOperation:
                     self.state = decode_json(response.state_json)
                     details = copy.deepcopy(self.state)
                     self.dispatch_attempted = True
+                    if self.adapter.ownership is not None:
+                        # Register the deterministic approach before the outer goal can
+                        # cause a child; status and bridge telemetry may arrive out of order.
+                        self.adapter.ownership.register(
+                            self.adapter.ownership.navigate, self.approach_id,
+                            pending_navigation=True)
                     try:
                         self.motion = RosNavigationOperation(self.adapter.client.send_goal_async(
                             NavigateCompleteCoverage.Goal(frame_id=self.config['frame_id']),
@@ -116,6 +132,8 @@ class CoverageOperation:
                 elif update.error:
                     return ExecutionUpdate('stopping', error=update.error, details=details)
             if self.terminal:
+                if self.adapter.ownership is not None and self.approach_id is not None:
+                    self.adapter.ownership.navigation_terminal(self.approach_id)
                 self.adapter.operations.pop(self.goal_id, None)
                 return self.terminal
             bridge_error = self.state.get('error', '')

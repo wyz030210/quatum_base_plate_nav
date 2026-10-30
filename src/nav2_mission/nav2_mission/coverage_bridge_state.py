@@ -12,7 +12,8 @@ from rclpy.parameter import Parameter, parameter_value_to_python
 from std_msgs.msg import String
 from unique_identifier_msgs.msg import UUID
 
-from .coverage_task import PLANNER_DEFAULTS
+from .coverage_task import PLANNER_DEFAULTS, coverage_region
+from .coverage.region_editor import validate_region
 
 
 def child_ids(outer_id):
@@ -199,11 +200,14 @@ class BridgeRun:
             raise RuntimeError('planner snapshot readback mismatch')
         effective = {name: observed[name] for name in PLANNER_DEFAULTS}
         self.emit('preparing', planner_confirmed=True, effective_planner=effective)
-        points = self.config['polygons'][0]
-        minimum = min(math.hypot(points[i+1][0]-points[i][0],
-                                 points[i+1][1]-points[i][1]) for i in range(4))
-        if minimum <= 2 * effective['default_headland_width'] + effective['operation_width']:
-            raise ValueError('rectangle too narrow for effective headland and operation width')
+        width = effective['operation_width']
+        region = validate_region(coverage_region(self.config['polygons']), width)
+        headland = effective['default_headland_width'] if self.node._generate_headland else 0.0
+        if isinstance(headland, bool) or not isinstance(headland, (int, float)) or (
+                not math.isfinite(headland) or headland < 0):
+            raise ValueError('effective headland width must be finite and nonnegative')
+        if region.buffer(-headland - width / 2.0).is_empty:
+            raise ValueError('region too narrow for effective headland and operation width')
         self.emit('planning')
 
     def release(self):

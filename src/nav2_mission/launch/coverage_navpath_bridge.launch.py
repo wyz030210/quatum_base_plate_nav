@@ -111,6 +111,7 @@ def generate_launch_description():
                 default_value="true",
                 description="Whether to generate nav_path for FollowPath",
             ),
+            DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument("navigate_to_start", default_value="true"),
             DeclareLaunchArgument("navigate_to_pose_action_name", default_value="/navigate_to_pose"),
             DeclareLaunchArgument("navigate_to_start_timeout_sec", default_value="120.0"),
@@ -125,6 +126,7 @@ def generate_launch_description():
                 output="screen",
                 parameters=[
                     {
+                        "use_sim_time": LaunchConfiguration("use_sim_time"),
                         "task_file": task_file,
                         "default_frame_id": default_frame_id,
                         "execute_action_name": execute_action_name,

@@ -12,8 +12,9 @@ from launch.actions import (
     SetLaunchConfiguration,
     TimerAction,
 )
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
@@ -39,10 +40,18 @@ def validate_arguments(context):
         raise RuntimeError(f"map YAML does not exist: {map_path}")
 
     for name in ("use_sim_time", "use_rviz", "use_coverage", "autostart",
-                 "use_composition", "use_respawn"):
+                 "use_composition", "use_respawn", "use_task_control"):
         value = LaunchConfiguration(name).perform(context).strip().lower()
         if value not in {"true", "false", "1", "0"}:
             raise RuntimeError(f"{name} must be true or false; got {value!r}")
+
+    if LaunchConfiguration("use_task_control").perform(context).lower() in ("true", "1"):
+        digest = LaunchConfiguration("task_map_id").perform(context)
+        profile = LaunchConfiguration("task_localization_profile").perform(context)
+        if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+            raise RuntimeError("task_map_id must be the explicitly provisioned lowercase SHA256")
+        if not profile or profile != profile.strip():
+            raise RuntimeError("task_localization_profile must be explicitly provisioned")
 
     values = {}
     for name in ("wheel_base", "wheel_radius", "max_forward_speed", "max_reverse_speed",
@@ -78,6 +87,8 @@ def generate_launch_description():
     base_driver = include_launch(
         "vehicle_can_bridge", ["launch", "auto_control.launch.py"],
         {"serial_port": config("can_serial_port"),
+         "use_sim_time": config("use_sim_time"),
+         "task_control_required": config("use_task_control"),
          **{name: config(name) for name in (
              "wheel_base", "wheel_radius", "max_forward_speed", "max_reverse_speed",
              "max_yaw_rate", "max_steering_angle_deg", "min_steering_speed")}},
@@ -116,8 +127,12 @@ def generate_launch_description():
     navigation = include_launch(
         "wheeltec_nav2", ["launch", "nav2.launch.py"],
         {"map": config("map"), "params": config("params_file"),
+         "use_task_control": config("use_task_control"),
+         "use_coverage": PythonExpression([
+             "'", config("use_coverage"), "'.lower() in ('true', '1') or '",
+             config("use_task_control"), "'.lower() in ('true', '1')"]),
          **{name: config(name) for name in (
-             "coverage_params_file", "task_file", "use_coverage", "use_sim_time",
+             "coverage_params_file", "task_file", "use_sim_time",
              "use_rviz", "autostart", "use_composition", "use_respawn", "log_level",
              "minimum_turning_radius", *speed_names)}},
     )
@@ -136,6 +151,10 @@ def generate_launch_description():
             FindPackageShare("nav2_mission"), "config", "coverage_navpath_task.yaml"
         ])),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
+        DeclareLaunchArgument("use_task_control", default_value="false"),
+        DeclareLaunchArgument("task_map_id", default_value=""),
+        DeclareLaunchArgument("task_localization_profile", default_value=""),
+        DeclareLaunchArgument("task_timeout_sec", default_value="600.0"),
         DeclareLaunchArgument("use_rviz", default_value="true"),
         DeclareLaunchArgument("use_coverage", default_value="false",
                               description="Enable coverage nodes, without sending a mission"),
@@ -144,8 +163,8 @@ def generate_launch_description():
         DeclareLaunchArgument("use_composition", default_value="False"),
         DeclareLaunchArgument("use_respawn", default_value="False"),
         DeclareLaunchArgument("log_level", default_value="info"),
-        DeclareLaunchArgument("can_serial_port", default_value=
-                              "/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"),
+        DeclareLaunchArgument(
+            "can_serial_port", default_value="/dev/serial/by-id/usb-1a86_USB_Serial-if00-port0"),
         DeclareLaunchArgument("rtk_serial_port", default_value=(
             "/dev/serial/by-id/"
             "usb-Silicon_Labs_CP2102_USB_to_UART_Bridge_Controller_0001-if00-port0"
@@ -164,6 +183,35 @@ def generate_launch_description():
         DeclareLaunchArgument("max_steering_angle_deg", default_value="17.5"),
         DeclareLaunchArgument("min_steering_speed", default_value="0.02"),
         OpaqueFunction(function=validate_arguments),
+        Node(
+            package="nav2_mission", executable="task_control_node", name="task_control_node",
+            condition=IfCondition(LaunchConfiguration("use_task_control")),
+            parameters=[{
+                "use_sim_time": ParameterValue(
+                    LaunchConfiguration("use_sim_time"), value_type=bool),
+                "map_id": ParameterValue(LaunchConfiguration("task_map_id"), value_type=str),
+                "localization_profile": ParameterValue(
+                    LaunchConfiguration("task_localization_profile"), value_type=str),
+                "require_localization_schema": True,
+                "task_timeout_sec": ParameterValue(
+                    LaunchConfiguration("task_timeout_sec"), value_type=float),
+            }]),
+        Node(
+            package="nav2_mission", executable="localization_provider",
+            name="localization_provider",
+            condition=IfCondition(LaunchConfiguration("use_task_control")),
+            parameters=[{
+                "use_sim_time": ParameterValue(
+                    LaunchConfiguration("use_sim_time"), value_type=bool),
+                "source": "rtk_ekf",
+                "map_id": ParameterValue(LaunchConfiguration("task_map_id"), value_type=str),
+                "localization_profile": ParameterValue(
+                    LaunchConfiguration("task_localization_profile"), value_type=str),
+                "rtk_datum_lat": ParameterValue(
+                    LaunchConfiguration("datum_lat"), value_type=float),
+                "rtk_datum_lon": ParameterValue(
+                    LaunchConfiguration("datum_lon"), value_type=float),
+            }]),
         *delayed_stage(0.0, "vehicle_can_bridge", base_driver),
         *delayed_stage(2.0, "livox_mid360", livox_driver),
         *delayed_stage(4.0, "fast_lio", fast_lio),
