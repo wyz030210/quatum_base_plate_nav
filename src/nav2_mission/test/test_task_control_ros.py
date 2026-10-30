@@ -202,8 +202,9 @@ def test_ros_cancel_before_goal_acceptance_revokes_late_goal_and_isolates_next_t
     boundary['accept_delay'] = 0.4
     boundary['execute_time'] = 2.0
     req = StartTask.Request(task_type='inspection', request_json=json.dumps({
-        'frame_id': 'map', 'point': {'id': 'late', 'type': 'security',
-        'x': 1.0, 'y': 2.0, 'yaw': 0.0, 'stay_time': 0.0}}))
+        'frame_id': 'map',
+        'point': {'id': 'late', 'type': 'security',
+                  'x': 1.0, 'y': 2.0, 'yaw': 0.0, 'stay_time': 0.0}}))
     first = call(StartTask, '/task_control/start', req)
     assert first.accepted
     deadline = time.monotonic() + 3
@@ -245,8 +246,9 @@ def test_fixture_can_drain_an_active_navigation_goal(ros_system):
     call, goals, _, boundary = ros_system
     boundary['execute_time'] = 3.0
     request = StartTask.Request(task_type='inspection', request_json=json.dumps({
-        'frame_id': 'map', 'point': {'id': 'cleanup', 'type': 'security',
-        'x': 1.0, 'y': 2.0, 'yaw': 0.0, 'stay_time': 0.0}}))
+        'frame_id': 'map',
+        'point': {'id': 'cleanup', 'type': 'security',
+                  'x': 1.0, 'y': 2.0, 'yaw': 0.0, 'stay_time': 0.0}}))
     assert call(StartTask, '/task_control/start', request).accepted
     deadline = time.monotonic() + 3
     while not goals and time.monotonic() < deadline:
@@ -263,8 +265,9 @@ def test_process_signal_cancels_owned_motion_stops_and_writes_report(ros_system,
     call, goals, commands, boundary = ros_system
     boundary['execute_time'] = 3.0
     req = StartTask.Request(task_type='inspection', request_json=json.dumps({
-        'frame_id': 'map', 'point': {'id': 'interrupted', 'type': 'security',
-        'x': 1.0, 'y': 2.0, 'yaw': 0.0, 'stay_time': 2.0}}))
+        'frame_id': 'map',
+        'point': {'id': 'interrupted', 'type': 'security',
+                  'x': 1.0, 'y': 2.0, 'yaw': 0.0, 'stay_time': 2.0}}))
     deadline = time.monotonic() + 4
     while time.monotonic() < deadline:
         reply = call(StartTask, '/task_control/start', req)
