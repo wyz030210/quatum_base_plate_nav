@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 import time
 
-os.environ['ROS_DOMAIN_ID'] = '173'
+os.environ.setdefault('ROS_DOMAIN_ID', '173')
 os.environ['ROS_LOCALHOST_ONLY'] = '1'
 
 import pytest
@@ -35,6 +35,7 @@ class CommandBoundary:
         self.node.create_subscription(String, '/task_control/state', self.on_state, 100)
         self.command = self.node.create_publisher(Twist, '/cmd_vel', 10)
         self.feedback = self.node.create_publisher(Odometry, '/odometry/filtered_odom', 10)
+        self.raw = self.node.create_publisher(Odometry, '/Odometry', 10)
         self.stop = self.node.create_publisher(Bool, '/task_control/stop', 10)
         self.heartbeat = self.node.create_publisher(Empty, '/task_control/heartbeat', 10)
         self.emergency = self.node.create_publisher(Bool, '/task_control/emergency_stop', 10)
@@ -70,7 +71,8 @@ class CommandBoundary:
         raise AssertionError(f'Non-finite JSON state: {value}')
 
     def pump(self, duration, feedback=True, command=None, heartbeat=False,
-             linear=0.0, angular=0.0, stamp_offset=0.0, stamp=None, yaw=0.0):
+             linear=0.0, angular=0.0, stamp_offset=0.0, stamp=None, yaw=0.0, raw=True,
+             raw_frame='odom', raw_child='base_link'):
         end = time.monotonic() + duration
         while time.monotonic() < end:
             if feedback:
@@ -81,6 +83,13 @@ class CommandBoundary:
                 odom.twist.twist.linear.x = linear
                 odom.twist.twist.angular.z = angular
                 self.feedback.publish(odom)
+            if raw:
+                original = Odometry()
+                original.header.stamp = self.node.get_clock().now().to_msg()
+                original.header.frame_id = raw_frame
+                original.child_frame_id = raw_child
+                original.pose.pose.orientation.w = 1.0
+                self.raw.publish(original)
             if command is not None:
                 msg = Twist()
                 msg.linear.x = command
@@ -396,3 +405,26 @@ def test_late_safety_sample_cannot_hide_an_expired_active_run(boundary, missing)
     io.pump(0.04, heartbeat=True)
     io.pump(0.04, command=0.2, heartbeat=True)
     assert io.frames[-1][1:] == (0, 90), 'A late sample cannot silently renew an expired run'
+
+
+def test_fresh_ekf_prediction_cannot_confirm_stop_after_raw_source_dies(boundary):
+    io = boundary(task_control_required=True, raw_feedback_required=True)
+    io.until(lambda: io.states and io.states[-1]['stopped'], heartbeat=True)
+    io.set_bool(io.stop, False, heartbeat=True)
+    io.until(lambda: io.frames[-1][1] > 0, command=0.2, heartbeat=True, linear=0.2)
+    io.pump(0.4, raw=False, command=0.2, heartbeat=True)
+    assert io.frames[-1][1:] == (0, 90)
+    assert not io.states[-1]['stopped'], 'Predicted fresh zero twist is not measured rest'
+    assert not io.states[-1]['ready']
+    assert not io.reset_result(raw=False, heartbeat=True).success
+    io.until(lambda: io.states[-1]['stopped'], heartbeat=True)
+    assert io.reset_result(heartbeat=True).success
+
+
+@pytest.mark.parametrize('frames', [('wrong_odom', 'base_link'), ('odom', 'wrong_base')])
+def test_wrong_raw_source_frames_cannot_confirm_stop(boundary, frames):
+    io = boundary(task_control_required=True, raw_feedback_required=True)
+    io.pump(0.4, heartbeat=True, raw_frame=frames[0], raw_child=frames[1])
+    assert not io.states[-1]['stopped']
+    assert not io.states[-1]['ready']
+    assert not io.reset_result(heartbeat=True, raw_frame=frames[0], raw_child=frames[1]).success

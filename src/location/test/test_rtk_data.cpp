@@ -22,9 +22,9 @@ static std::string sentence(const std::string & body)
     return "$" + body + suffix;
 }
 
-static std::string gga(int quality)
+static std::string gga(int quality, const std::string & utc = "080158.30")
 {
-    return sentence("GNGGA,080158.30,2929.39408860,N,10634.05546410,E," +
+    return sentence("GNGGA," + utc + ",2929.39408860,N,10634.05546410,E," +
         std::to_string(quality) + ",25,1.0,256.5516,M,-38.0892,M,,");
 }
 
@@ -212,4 +212,109 @@ TEST_F(SerialReaderTest, ReconnectsUsingStableDeviceLinkAfterPortChanges)
         std::this_thread::sleep_for(milliseconds(50));
     }
     EXPECT_TRUE(received);
+}
+
+TEST_F(SerialReaderTest, TaskEvidenceNeedsIndependentAdvancingFixedQualityAndHeading)
+{
+    establishPosition();
+    EXPECT_FALSE(reader.getSourceState().ready);
+    send(sentence("GNHDT,123.4,T"));
+    send(gga(4, "080159.30"));
+    ASSERT_TRUE(waitFor([this] { return reader.getSourceState().quality.sequence > 0; }));
+    EXPECT_FALSE(reader.getSourceState().ready);  // one epoch is not progression
+    send(sentence("GNGGA,080200.30,2929.39408860,N,10634.05546410,E,4,25,1.0,256.5,M,-38.0,M,,"));
+    ASSERT_TRUE(waitFor([this] { return reader.getSourceState().ready; }));
+    send(sentence("GNGGA,080200.30,2929.39408860,N,10634.05546410,E,0,25,1.0,256.5,M,-38.0,M,,"));
+    ASSERT_TRUE(waitFor([this] { return !reader.getSourceState().ready; }));
+    send(sentence("GNRMC,080201.30,A,2929.39408860,N,10634.05546410,E,0.0,0.0,281026,2.6,W,A,C"));
+    std::this_thread::sleep_for(milliseconds(50));
+    EXPECT_FALSE(reader.getSourceState().ready);  // RMC cannot repair GGA quality
+}
+
+TEST_F(SerialReaderTest, DelayedGgaQualityCannotQualifyNewerRmcPositions)
+{
+    send(sentence("GNHDT,123.4,T"));
+    send(sentence("GNRMC,080200.00,A,2929.39408860,N,10634.05546410,E,0,0,291026,,,A"));
+    send(sentence("GNRMC,080201.00,A,2929.39408860,N,10634.05546410,E,0,0,291026,,,A"));
+    ASSERT_TRUE(waitFor([this] { return reader.getSourceState().position.sequence == 2; }));
+    send(gga(4, "080158.00"));
+    send(gga(4, "080159.00"));
+    ASSERT_TRUE(waitFor([this] { return reader.getSourceState().quality.sequence == 2; }));
+    EXPECT_FALSE(reader.getSourceState().ready);
+}
+
+TEST_F(SerialReaderTest, RepeatedNormalizedEpochAndSameEpochRmcDoNotAdvancePosition)
+{
+    send(sentence("GNHDT,123.4,T"));
+    send(gga(4, "080158.30"));
+    send(gga(4, "080158.40"));
+    ASSERT_TRUE(waitFor([this] { return reader.getSourceState().ready; }));
+    const auto before = reader.getSourceState();
+    send(gga(4, "080158.400000"));
+    send(sentence("GNRMC,080158.400,A,2929.39408860,N,10634.05546410,E,0,0,291026,,,A"));
+    std::this_thread::sleep_for(milliseconds(40));
+    EXPECT_EQ(reader.getSourceState().position.sequence, before.position.sequence);
+    EXPECT_EQ(reader.getSourceState().quality.sequence, before.quality.sequence);
+    send(gga(4, "080158.20"));
+    ASSERT_TRUE(waitFor([this] { return !reader.getSourceState().ready; }));
+}
+
+TEST_F(SerialReaderTest, HeadingMustBeValidAndIndependentlyCurrent)
+{
+    send(sentence("GNHDT,123.4,T"));
+    send(gga(4, "080158.30"));
+    send(gga(4, "080158.40"));
+    ASSERT_TRUE(waitFor([this] { return reader.getSourceState().ready; }));
+    send(sentence("GNHDT,nan,T"));
+    ASSERT_TRUE(waitFor([this] { return !reader.getSourceState().heading.valid; }));
+    send(sentence("GNHDT,123.4,M"));
+    std::this_thread::sleep_for(milliseconds(30));
+    EXPECT_FALSE(reader.getSourceState().heading.valid);
+    send(sentence("GNHDT,123.4,T"));
+    ASSERT_TRUE(waitFor([this] { return reader.getSourceState().ready; }));
+    for (int i = 0; i < 12; ++i) {
+        send(gga(4, "080159." + std::to_string(i + 10)));
+        std::this_thread::sleep_for(milliseconds(100));
+    }
+    EXPECT_TRUE(reader.getSourceState().position.valid);
+    EXPECT_FALSE(reader.getSourceState().heading.valid);
+    EXPECT_FALSE(reader.getSourceState().ready);
+}
+
+TEST_F(SerialReaderTest, ContinuousMidnightRolloverRemainsUsableWithoutRmcDate)
+{
+    send(sentence("GNHDT,123.4,T"));
+    send(gga(4, "235959.80"));
+    send(gga(4, "235959.90"));
+    ASSERT_TRUE(waitFor([this] { return reader.getSourceState().ready; }));
+    send(gga(4, "000000.00"));
+    ASSERT_TRUE(waitFor([this] { return reader.getSourceState().position.sequence == 3; }));
+    EXPECT_TRUE(reader.getSourceState().ready);
+}
+
+TEST_F(SerialReaderTest, ReconnectRequiresNewGenerationHeadingAndAdvancingPositions)
+{
+    send(sentence("GNHDT,123.4,T"));
+    send(gga(4, "080158.30"));
+    send(gga(4, "080158.40"));
+    ASSERT_TRUE(waitFor([this] { return reader.getSourceState().ready; }));
+    const auto generation = reader.getSourceState().connection_generation;
+    const int old_master = master;
+    master = createPort();
+    ASSERT_GE(master, 0);
+    ASSERT_EQ(unlink(link.c_str()), 0);
+    ASSERT_EQ(symlink(slave_name.c_str(), link.c_str()), 0);
+    close(old_master);
+    ASSERT_TRUE(waitFor([this, generation] {
+        return reader.getSourceState().connection_generation > generation;
+    }, seconds(7)));
+    send(sentence("GNHDT,123.4,T"));
+    send(gga(4, "080158.40"));
+    ASSERT_TRUE(waitFor([this] { return reader.getSourceState().heading.valid; }));
+    EXPECT_FALSE(reader.getSourceState().ready);
+    send(gga(4, "080158.50"));
+    ASSERT_TRUE(waitFor([this] { return reader.getSourceState().position.sequence == 1; }));
+    EXPECT_FALSE(reader.getSourceState().ready);
+    send(gga(4, "080158.60"));
+    ASSERT_TRUE(waitFor([this] { return reader.getSourceState().ready; }));
 }

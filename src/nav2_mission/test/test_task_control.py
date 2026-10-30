@@ -292,3 +292,21 @@ def test_direct_point_skip_rule_is_supported_without_retrying_failed_navigation(
     assert status['result'] == 'succeeded'
     assert status['details']['skipped'] == 1 and status['details']['succeeded'] == 0
     assert len(nav.goals) == 1
+
+
+def test_task_freezes_localization_context_without_mutating_handler_config(tmp_path):
+    manager, clock, nav, stop = system(tmp_path)
+    state = LocalizationState(True, 'map', clock(), 0.0, source='amcl',
+                              x=1.0, y=2.0, yaw=0.0, map_id='map-A',
+                              localization_profile='indoor-A', evidence_generation=1,
+                              schema_version=1)
+    manager.localization.snapshot = lambda now: replace(state, received_at=now)
+    request = dict(REQUEST, map_id='map-A', localization_profile='indoor-A')
+    assert manager.start('inspection', request)['accepted']
+    assert 'map_id' not in manager.status()['config']
+    tick(manager, clock)
+    state = replace(state, evidence_generation=2)
+    tick(manager, clock)
+    assert manager.status()['phase'] == 'stopping'
+    assert 'context changed' in manager.status()['error']
+    assert nav.motions[0].cancel_requested
