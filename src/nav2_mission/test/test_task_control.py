@@ -136,6 +136,7 @@ def test_cancel_waits_for_owned_pending_motion_and_new_stop_not_cancel_ack(tmp_p
     nav.motions[0].update = ExecutionUpdate('navigating', done=True, error='canceled')
     manager.tick()
     assert manager.status()['result'] == 'canceled'
+    assert manager.status()['error'] == 'user canceled'
     assert manager.cancel(task_id)['accepted']
     next_task = manager.start('inspection', REQUEST)
     assert next_task['accepted'] and next_task['task_id'] != task_id
@@ -249,6 +250,7 @@ def test_emergency_stop_records_outcome_after_parking_and_keeps_new_starts_block
     stop.state = replace(stop.state, emergency_stop=True, ready=False)
     manager.tick()
     assert manager.status()['result'] == 'failed'
+    assert manager.status()['error'] == 'safety invalid or manual/emergency stop'
     assert manager.status()['cleanup_confirmed'] and not manager.status()['active']
     assert not manager.start('inspection', REQUEST)['accepted']
 
