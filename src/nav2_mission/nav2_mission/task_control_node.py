@@ -52,7 +52,8 @@ class TaskControlNode(Node):
             through_navigator=param('through_navigator_node'),
             navigator_server=param('navigator_server_node'), through=param('through_action_name'))
         self.stop_adapter = RosStop(self)
-        self.navigation_adapter = RosNavigation(self, param('navigate_action_name'), self.ownership)
+        self.navigation_adapter = RosNavigation(
+            self, param('navigate_action_name'), self.ownership)
         self.manager = TaskManager(
             self.navigation_adapter,
             RosLocalization(self, param('localization_topic')), self.stop_adapter,

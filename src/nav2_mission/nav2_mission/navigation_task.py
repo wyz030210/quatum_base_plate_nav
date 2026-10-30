@@ -1,5 +1,5 @@
 """Ordinary pose navigation with the manager's authorization and stop lifecycle."""
-import math
+from .coverage_task import finite
 
 
 class NavigationTask:
@@ -15,8 +15,7 @@ class NavigationTask:
             raise ValueError('navigation frame_id must be nonempty')
         if not isinstance(point, dict) or set(point) != {'x', 'y', 'yaw'}:
             raise ValueError('navigation point requires x, y and yaw')
-        if any(isinstance(value, bool) or not isinstance(value, (int, float)) or
-               not math.isfinite(value) for value in point.values()):
+        if any(not finite(value) for value in point.values()):
             raise ValueError('navigation coordinates must be finite numbers')
         return {'frame_id': frame, 'point': dict(point)}
 

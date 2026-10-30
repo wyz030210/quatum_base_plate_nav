@@ -49,7 +49,8 @@ def test_humble_navigator_owns_its_follow_path_and_drains_it(tmp_path):
                 pose.header.frame_id = 'map'
                 pose.pose.orientation.w = 1.0
                 result.path.header.frame_id = 'map'
-                result.path.poses = [pose, handle.request.goal] if cls == ComputePathToPose else [pose]
+                result.path.poses = (
+                    [pose, handle.request.goal] if cls == ComputePathToPose else [pose])
             if cls == FollowPath:
                 observed['follow'] += 1
                 while not handle.is_cancel_requested:
@@ -84,9 +85,10 @@ def test_humble_navigator_owns_its_follow_path_and_drains_it(tmp_path):
         stamp = fake.get_clock().now().nanoseconds / 1e9
         loc.publish(String(data=json.dumps({'valid': True, 'frame_id': 'map', 'source': 'fake',
                                            'source_stamp_sec': stamp, 'x': 0, 'y': 0, 'yaw': 0})))
-        safety.publish(String(data=json.dumps({'ready': True, 'stopped': observed['stop'],
-            'stop_requested': observed['stop'], 'manual_override': False, 'emergency_stop': False,
-            'fault': '', 'feedback_age_sec': 0.0})))
+        safety.publish(String(data=json.dumps({
+            'ready': True, 'stopped': observed['stop'], 'stop_requested': observed['stop'],
+            'manual_override': False, 'emergency_stop': False, 'fault': '',
+            'feedback_age_sec': 0.0})))
     fake.create_timer(0.02, states, callback_group=group)
     manager = TaskControlNode(parameter_overrides=[Parameter('report_dir', value=str(tmp_path))])
     executor = MultiThreadedExecutor(num_threads=6)
@@ -95,10 +97,13 @@ def test_humble_navigator_owns_its_follow_path_and_drains_it(tmp_path):
     worker = threading.Thread(target=executor.spin, daemon=True)
     worker.start()
     tree_dir = Path(__file__).resolve().parents[2] / 'wheeltec_nav2' / 'behavior_trees'
-    process = subprocess.Popen(['/opt/ros/humble/lib/nav2_bt_navigator/bt_navigator', '--ros-args',
+    process = subprocess.Popen([
+        '/opt/ros/humble/lib/nav2_bt_navigator/bt_navigator', '--ros-args',
         '-p', f'default_nav_to_pose_bt_xml:={tree_dir / "navigate_to_pose_ackermann.xml"}',
-        '-p', f'default_nav_through_poses_bt_xml:={tree_dir / "navigate_through_poses_ackermann.xml"}',
-        '-p', 'wait_for_service_timeout:=1000'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        '-p', 'default_nav_through_poses_bt_xml:=' +
+        str(tree_dir / 'navigate_through_poses_ackermann.xml'),
+        '-p', 'wait_for_service_timeout:=1000'],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     def call(kind, name, request):
         client = fake.create_client(kind, name)
@@ -113,11 +118,18 @@ def test_humble_navigator_owns_its_follow_path_and_drains_it(tmp_path):
             request = ChangeState.Request()
             request.transition.id = transition
             assert call(ChangeState, '/bt_navigator/change_state', request).success
+
         def graph():
             return {name: dict(get_action_client_names_and_types_by_node(fake, name, ns))
                     for name, ns in fake.get_node_names_and_namespaces()}
-        clients = wait(lambda: (g if '/follow_path' in g.get(
-            'bt_navigator_navigate_to_pose_rclcpp_node', {}) else None) if (g := graph()) else None)
+
+        def pose_clients():
+            clients = graph()
+            if '/follow_path' in clients.get('bt_navigator_navigate_to_pose_rclcpp_node', {}):
+                return clients
+            return None
+
+        clients = wait(pose_clients)
         assert '/navigate_to_pose' in clients['bt_navigator']
         assert '/follow_path' in clients['bt_navigator_navigate_through_poses_rclcpp_node']
         request = StartTask.Request(task_type='navigation', request_json=json.dumps({
@@ -125,15 +137,23 @@ def test_humble_navigator_owns_its_follow_path_and_drains_it(tmp_path):
         started = call(StartTask, '/task_control/start', request)
         assert started.accepted, started.message
         wait(lambda: observed['follow'])
+
         def child_observed():
-            status = json.loads(call(GetTaskStatus, '/task_control/status', GetTaskStatus.Request()).status_json)
+            reply = call(GetTaskStatus, '/task_control/status', GetTaskStatus.Request())
+            status = json.loads(reply.status_json)
             assert status['active'] and not status.get('error'), status
-            return status if status.get('motion_ownership', {}).get('inferred_navigator_follow_ids') else None
+            if status.get('motion_ownership', {}).get('inferred_navigator_follow_ids'):
+                return status
+            return None
         status = wait(child_observed)
         assert not status['motion_ownership']['unknown_active_goals']
-        assert call(CancelTask, '/task_control/cancel', CancelTask.Request(task_id=started.task_id)).accepted
+        canceled = call(CancelTask, '/task_control/cancel',
+                        CancelTask.Request(task_id=started.task_id))
+        assert canceled.accepted
+
         def ended():
-            status = json.loads(call(GetTaskStatus, '/task_control/status', GetTaskStatus.Request()).status_json)
+            reply = call(GetTaskStatus, '/task_control/status', GetTaskStatus.Request())
+            status = json.loads(reply.status_json)
             return status if not status['active'] else None
         status = wait(ended)
         assert status['result'] == 'canceled' and status['cleanup_confirmed'], status

@@ -96,6 +96,8 @@ class MotionOwnership:
             # old status cannot establish termination, including after restart.
             self.observed[action][goal_id] = state
             if state in _TERMINAL:
+                if action == self.navigate:
+                    self.pending_navigation.discard(goal_id)
                 self.canceling.discard((action, goal_id))
 
     def unknown(self):

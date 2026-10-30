@@ -2,7 +2,9 @@
 import pytest
 from launch.actions import OpaqueFunction
 
-from test_outdoor_launch import arguments, capture_nodes, context_for, descendants, include_named, load
+from test_outdoor_launch import (
+    arguments, capture_nodes, context_for, descendants, include_named, load,
+)
 
 
 @pytest.mark.parametrize('filename,source,navigation', [
@@ -27,8 +29,8 @@ def test_vehicle_entry_enables_one_shared_task_layer(filename, source, navigatio
     assert provider['parameters'][0]['source'] == source
     for node in (manager, provider):
         params = node['parameters'][0]
-        assert params['map_id'].perform(context) == 'a' * 64
-        assert params['localization_profile'].perform(context) == 'field'
+        assert params['map_id'].evaluate(context) == 'a' * 64
+        assert params['localization_profile'].evaluate(context) == 'field'
         assert params['use_sim_time'].evaluate(context)
     assert manager['parameters'][0]['require_localization_schema'] is True
     base = arguments(include_named(description, context, 'auto_control.launch.py'), context)
@@ -42,7 +44,9 @@ def test_task_entry_requires_provisioned_map_and_profile():
     description = module.generate_launch_description()
     context = context_for(description, use_task_control='true')
     with pytest.raises(RuntimeError, match='task_map_id|task_localization_profile'):
-        next(item for item in descendants(description.entities) if isinstance(item, OpaqueFunction)).execute(context)
+        validator = next(item for item in descendants(description.entities)
+                         if isinstance(item, OpaqueFunction))
+        validator.execute(context)
 
 
 def test_task_mode_disables_legacy_selector_and_uses_managed_rviz_goal():
@@ -62,6 +66,7 @@ def test_task_mode_disables_legacy_selector_and_uses_managed_rviz_goal():
     src = Path(__file__).resolve().parents[2]
     old = yaml.safe_load((src / 'wheeltec_nav2/rviz/map.rviz').read_text())
     managed = yaml.safe_load((src / 'wheeltec_nav2/rviz/map_task.rviz').read_text())
+
     def goal_topic(config):
         return next(tool['Topic']['Value'] for tool in config['Visualization Manager']['Tools']
                     if tool['Class'] == 'rviz_default_plugins/SetGoal')
