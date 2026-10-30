@@ -2,11 +2,13 @@
 import json
 import math
 import time
+import uuid
 
 from action_msgs.msg import GoalStatus
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from std_msgs.msg import Bool, Empty, String
+from unique_identifier_msgs.msg import UUID
 
 from .task_adapters import ExecutionUpdate, LocalizationState, StopState
 
@@ -98,7 +100,9 @@ class RosStop:
 
 
 class RosNavigation:
-    def __init__(self, node, action_name):
+    def __init__(self, node, action_name, ownership=None):
+        self.ownership = ownership
+        self.action_name = action_name
         self.node = node
         self.client = ActionClient(node, NavigateToPose, action_name)
 
@@ -113,13 +117,19 @@ class RosNavigation:
         goal.pose.pose.orientation.z = math.sin(point['yaw'] / 2)
         goal.pose.pose.orientation.w = math.cos(point['yaw'] / 2)
         # Empty BT selects target vehicle's configured Ackermann tree, no TB3 recovery.
-        return RosNavigationOperation(self.client.send_goal_async(goal))
+        goal_id = uuid.uuid4().hex
+        if self.ownership is not None:
+            self.ownership.register(self.action_name, goal_id, pending_navigation=True)
+        return RosNavigationOperation(self.client.send_goal_async(
+            goal, goal_uuid=UUID(uuid=list(bytes.fromhex(goal_id)))),
+            goal_id=goal_id, ownership=self.ownership)
 
 
 class RosNavigationOperation:
     """Keep ownership across unresolved accepts; cancel acceptance is not terminal."""
 
-    def __init__(self, response):
+    def __init__(self, response, goal_id=None, ownership=None):
+        self.goal_id, self.ownership = goal_id, ownership
         self.response = response
         self.handle = None
         self.result = None
@@ -139,6 +149,7 @@ class RosNavigationOperation:
                 if not self.handle.accepted:
                     self.terminal = ExecutionUpdate(
                         'navigating', True, False, 'navigation rejected')
+                    self._terminal_owned()
                     return self.terminal
                 self.result = self.handle.get_result_async()
             if self.handle is not None and self.cancel_requested and not self.cancel_sent:
@@ -149,8 +160,13 @@ class RosNavigationOperation:
                 success = result.status == GoalStatus.STATUS_SUCCEEDED
                 self.terminal = ExecutionUpdate('navigating', True, success,
                                                 '' if success else f'Nav2 status {result.status}')
+                self._terminal_owned()
                 return self.terminal
         except Exception as exc:
             # Transport uncertainty cannot prove the owned motion has ended.
             return ExecutionUpdate('navigating', error=f'navigation transport error: {exc}')
         return ExecutionUpdate('navigating')
+
+    def _terminal_owned(self):
+        if self.ownership is not None:
+            self.ownership.navigation_terminal(self.goal_id)

@@ -7,7 +7,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 from nav2_common.launch import RewrittenYaml
@@ -38,6 +38,7 @@ def generate_launch_description():
         "coverage_params_file": coverage_params_file,
         "use_amcl": "false", "slam": "False",
         "use_coverage": use_coverage, "use_coverage_server": use_coverage,
+        "use_task_control": config("use_task_control"),
         **{name: config(name) for name in (
             "task_file", "use_sim_time", "autostart", "use_composition", "use_respawn",
             "log_level", "max_forward_speed", "max_reverse_speed", "max_yaw_rate",
@@ -56,6 +57,7 @@ def generate_launch_description():
             FindPackageShare("nav2_mission"), "config", "coverage_navpath_task.yaml"
         ])),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
+        DeclareLaunchArgument("use_task_control", default_value="false"),
         DeclareLaunchArgument("use_rviz", default_value="false"),
         DeclareLaunchArgument("use_coverage", default_value="false"),
         DeclareLaunchArgument("autostart", default_value="true"),
@@ -71,7 +73,7 @@ def generate_launch_description():
         DeclareLaunchArgument("minimum_turning_radius", default_value="0.95"),
         Node(
             package="rviz2", executable="rviz2", name="rviz2",
-            arguments=["-d", os.path.join(package_dir, "rviz", "map.rviz")],
+            arguments=["-d", PythonExpression(["'", os.path.join(package_dir, "rviz", "map_task.rviz"), "' if '", LaunchConfiguration("use_task_control"), "'.lower() in ('true', '1') else '", os.path.join(package_dir, "rviz", "map.rviz"), "'"])],
             condition=IfCondition(config("use_rviz")), output="screen",
         ),
         Node(

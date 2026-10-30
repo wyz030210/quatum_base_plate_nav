@@ -14,7 +14,9 @@ from .task_ros_adapters import RosNavigationOperation, decode_json
 
 
 class RosCoverage:
-    def __init__(self, node, action, preparation, state_topic):
+    def __init__(self, node, action, preparation, state_topic, ownership=None):
+        self.ownership = ownership
+        self.action_name = action
         self.client = ActionClient(node, NavigateCompleteCoverage, action)
         self.preparation = node.create_client(PrepareCoverage, preparation)
         self.operations = {}
@@ -41,6 +43,12 @@ class CoverageOperation:
     def __init__(self, adapter, task_id, config):
         self.adapter, self.task_id = adapter, task_id
         self.goal_id = uuid.uuid4().hex
+        if adapter.ownership is not None:
+            from .coverage_bridge_state import child_ids
+            ids = child_ids(self.goal_id)
+            adapter.ownership.register(adapter.action_name, self.goal_id)
+            adapter.ownership.register(adapter.ownership.navigate, ids['approach'])
+            adapter.ownership.register(adapter.ownership.follow, ids['follow'])
         self.config = copy.deepcopy(config)
         self.state = {'phase': 'preparing', 'goal_id': self.goal_id, 'task_id': task_id}
         self.prepared = adapter.preparation.call_async(PrepareCoverage.Request(

@@ -1,11 +1,13 @@
 """ROS start/cancel/status services for the unified task manager."""
 import json
+import math
 import os
 import signal
 import threading
 import time
 
 import rclpy
+from geometry_msgs.msg import PoseStamped
 from nav2_mission_interfaces.srv import CancelTask, GetTaskStatus, StartTask
 from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
@@ -14,6 +16,7 @@ from std_msgs.msg import String
 from .coverage_task import CoverageTask
 from .coverage_task_ros import RosCoverage
 from .task_control import TaskManager
+from .motion_ownership import MotionOwnership
 from .task_ros_adapters import RosLocalization, RosNavigation, RosStop, decode_json
 
 
@@ -22,6 +25,12 @@ class TaskControlNode(Node):
         super().__init__('task_control_node', **kwargs)
         defaults = {
             'navigate_action_name': '/navigate_to_pose',
+            'follow_action_name': '/follow_path',
+            'navigator_node': '/bt_navigator_navigate_to_pose_rclcpp_node',
+            'through_navigator_node': '/bt_navigator_navigate_through_poses_rclcpp_node',
+            'navigator_server_node': '/bt_navigator',
+            'through_action_name': '/navigate_through_poses',
+            'coverage_bridge_node': '/coverage_navpath_bridge',
             'coverage_action_name': '/execute_coverage_navpath',
             'coverage_prepare_service': '/coverage/prepare',
             'coverage_state_topic': '/coverage/execution_state',
@@ -35,15 +44,23 @@ class TaskControlNode(Node):
         def param(name):
             return self.get_parameter(name).value
 
+        self.ownership = MotionOwnership(
+            self, param('navigate_action_name'), param('follow_action_name'),
+            param('coverage_action_name'), navigator=param('navigator_node'),
+            bridge=param('coverage_bridge_node'),
+            through_navigator=param('through_navigator_node'),
+            navigator_server=param('navigator_server_node'), through=param('through_action_name'))
         self.stop_adapter = RosStop(self)
+        self.navigation_adapter = RosNavigation(self, param('navigate_action_name'), self.ownership)
         self.manager = TaskManager(
-            RosNavigation(self, param('navigate_action_name')),
+            self.navigation_adapter,
             RosLocalization(self, param('localization_topic')), self.stop_adapter,
             param('report_dir'), state_timeout=param('state_timeout_sec'),
-            cancel_timeout=param('cancel_timeout_sec'), task_timeout=param('task_timeout_sec'))
-        self.manager.handlers['coverage'] = CoverageTask(RosCoverage(
+            cancel_timeout=param('cancel_timeout_sec'), task_timeout=param('task_timeout_sec'), motion_guard=self.ownership)
+        self.coverage_adapter = RosCoverage(
             self, param('coverage_action_name'), param('coverage_prepare_service'),
-            param('coverage_state_topic')))
+            param('coverage_state_topic'), ownership=self.ownership)
+        self.manager.handlers['coverage'] = CoverageTask(self.coverage_adapter)
         self.task_services = [
             self.create_service(StartTask, '/task_control/start', self.start_task),
             self.create_service(CancelTask, '/task_control/cancel', self.cancel_task),
@@ -51,6 +68,9 @@ class TaskControlNode(Node):
         ]
         self.status_publisher = self.create_publisher(
             String, '/task_control/status_snapshot', 10)
+        self.pose_reply = self.create_publisher(String, '/task_control/goal_response', 10)
+        self.pose_subscription = self.create_subscription(
+            PoseStamped, '/task_control/goal_pose', self.pose_goal, 10)
         self.timer = self.create_timer(0.05, self.tick)
         self.get_logger().info(
             f'Task control ready; state freshness={self.manager.state_timeout}s, '
@@ -67,6 +87,24 @@ class TaskControlNode(Node):
         response.task_id = reply['task_id']
         response.message = reply['message']
         return response
+
+    def pose_goal(self, message):
+        try:
+            pose = message.pose
+            quaternion = pose.orientation
+            values = (pose.position.x, pose.position.y, pose.position.z,
+                      quaternion.x, quaternion.y, quaternion.z, quaternion.w)
+            if (not all(math.isfinite(value) for value in values) or
+                    abs(sum(value * value for value in values[3:]) - 1.0) > 0.01 or
+                    abs(quaternion.x) > 1e-6 or abs(quaternion.y) > 1e-6):
+                raise ValueError('goal requires a finite planar pose and unit quaternion')
+            request = {'frame_id': message.header.frame_id, 'point': {
+                'x': pose.position.x, 'y': pose.position.y,
+                'yaw': 2.0 * math.atan2(quaternion.z, quaternion.w)}}
+            reply = self.manager.start('navigation', request)
+        except ValueError as exc:
+            reply = {'accepted': False, 'task_id': '', 'message': str(exc)}
+        self.pose_reply.publish(String(data=json.dumps(reply, allow_nan=False)))
 
     def cancel_task(self, request, response):
         reply = self.manager.cancel(request.task_id)
@@ -86,6 +124,12 @@ class TaskControlNode(Node):
             self.stop_adapter.request_stop('')
         self.status_publisher.publish(String(
             data=json.dumps(self.manager.status(), allow_nan=False)))
+
+    def destroy_node(self):
+        # rclpy Node.destroy_node does not destroy action-client waitables.
+        self.navigation_adapter.client.destroy()
+        self.coverage_adapter.client.destroy()
+        return super().destroy_node()
 
     def shutdown_tasks(self):
         self.manager.shutdown()
