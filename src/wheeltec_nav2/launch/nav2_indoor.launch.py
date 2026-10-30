@@ -5,7 +5,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
@@ -68,6 +68,7 @@ def generate_launch_description():
                 ),
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
+            DeclareLaunchArgument("use_task_control", default_value="false"),
             DeclareLaunchArgument("use_rviz", default_value="false"),
             DeclareLaunchArgument("autostart", default_value="true"),
             # Humble's shared-context lifecycle shutdown can deadlock in the initial TF wait.
@@ -89,7 +90,10 @@ def generate_launch_description():
                 package="rviz2",
                 executable="rviz2",
                 name="rviz2",
-                arguments=["-d", os.path.join(package_dir, "rviz", "map.rviz")],
+                arguments=["-d", PythonExpression([
+                    "'", os.path.join(package_dir, "rviz", "map_task.rviz"), "' if '",
+                    LaunchConfiguration("use_task_control"), "'.lower() in ('true', '1') else '",
+                    os.path.join(package_dir, "rviz", "map.rviz"), "'"])],
                 condition=IfCondition(use_rviz),
                 output="screen",
             ),
@@ -132,6 +136,7 @@ def generate_launch_description():
                         # Project in the ground-aligned vehicle frame so height
                         # limits reject floor returns instead of depending on
                         # the LiDAR mounting height.
+                        "use_sim_time": use_sim_time,
                         "target_frame": "base_footprint",
                         "transform_tolerance": 0.01,
                         "min_height": ParameterValue(
@@ -165,6 +170,7 @@ def generate_launch_description():
                     "params_file": params_file,
                     "coverage_params_file": coverage_params_file,
                     "use_coverage": use_coverage,
+                    "use_task_control": LaunchConfiguration("use_task_control"),
                     "use_sim_time": use_sim_time,
                     "slam": "False",
                     "autostart": autostart,

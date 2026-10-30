@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from .inspection import Inspection
+from .navigation_task import NavigationTask
 from .task_adapters import ExecutionUpdate, StopState
 
 
@@ -20,12 +21,15 @@ class TaskManager:
 
     def __init__(self, navigation, localization, stop, report_dir, *, clock=time.monotonic,
                  handlers=None, state_timeout=1.0, cancel_timeout=5.0, task_timeout=600.0,
-                 map_id='', localization_profile='', require_localization_schema=False):
+                 map_id='', localization_profile='', require_localization_schema=False,
+                 motion_guard=None):
+        self.motion_guard = motion_guard
         self.localization = localization
         self.stop = stop
         self.report_dir = Path(report_dir)
         self.clock = clock
-        self.handlers = handlers or {'inspection': Inspection(navigation)}
+        self.handlers = handlers or {'inspection': Inspection(navigation),
+                                     'navigation': NavigationTask(navigation)}
         for value in (state_timeout, cancel_timeout, task_timeout):
             if not math.isfinite(value) or value <= 0:
                 raise ValueError('task timeouts must be finite and positive')
@@ -45,6 +49,10 @@ class TaskManager:
     def start(self, task_type, request):
         if self.active:
             return {'accepted': False, 'task_id': '', 'message': 'task active or stop unconfirmed'}
+        if self.motion_guard is not None:
+            error = self.motion_guard.error()
+            if error:
+                return {'accepted': False, 'task_id': '', 'message': error}
         if task_type not in self.handlers:
             return {'accepted': False, 'task_id': '', 'message': 'unsupported task type'}
         try:
@@ -180,6 +188,9 @@ class TaskManager:
         if self.stopping_at is None:
             error = self._localization_error(self.current['config'], now,
                                              self.current['localization_context'])
+            if self.motion_guard is not None:
+                self.current['motion_ownership'] = self.motion_guard.snapshot()
+                error = self.motion_guard.error() or error
             if error:
                 self._stop('failed', error)
             elif not self._safety_fresh(safety, now) or not self._safety_permits(safety):
@@ -195,6 +206,10 @@ class TaskManager:
             done = update is None or update.done
             if update is not None and update.error and not update.done:
                 self.current['cleanup_error'] = update.error
+            if self.motion_guard is not None:
+                self.motion_guard.cancel_unknown()
+                done = done and self.motion_guard.drained()
+                self.current['motion_ownership'] = self.motion_guard.snapshot()
             if (done and safety.stopped and safety.stop_requested and
                     self._safety_fresh(safety, now) and safety.received_at > self.stopping_at):
                 self._finish(now)

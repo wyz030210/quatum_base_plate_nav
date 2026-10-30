@@ -35,6 +35,7 @@ def generate_launch_description():
             'command_safety_params', default_value=PathJoinSubstitution([
                 FindPackageShare('vehicle_can_bridge'), 'config', 'command_safety.yaml'])),
         DeclareLaunchArgument('task_control_required', default_value='false'),
+        DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('wheel_base', default_value='0.3'),
         DeclareLaunchArgument('wheel_radius', default_value='0.1275'),
         DeclareLaunchArgument('max_forward_speed', default_value='0.25'),
@@ -56,6 +57,8 @@ def generate_launch_description():
             name='cmd_vel_to_can_node',
             output='screen',
             parameters=[LaunchConfiguration('command_safety_params'), {
+                'use_sim_time': ParameterValue(
+                    LaunchConfiguration('use_sim_time'), value_type=bool),
                 'task_control_required': ParameterValue(
                     LaunchConfiguration('task_control_required'), value_type=bool),
                 'wheel_base': ParameterValue(wheel_base, value_type=float),
