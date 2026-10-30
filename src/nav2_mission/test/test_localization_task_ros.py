@@ -3,6 +3,7 @@
 Only sensors, downstream Nav2 actions and the captured CAN sink are substituted.
 """
 import json
+from contextlib import contextmanager
 import os
 import signal
 import subprocess
@@ -77,6 +78,21 @@ def complete_chain(tmp_path, request):
         if isinstance(value, list):
             fake.set_parameters([Parameter(name, Parameter.Type.INTEGER_ARRAY, value)])
     group = ReentrantCallbackGroup()
+    callback_condition = threading.Condition()
+    active_callbacks = 0
+
+    @contextmanager
+    def action_callback():
+        nonlocal active_callbacks
+        with callback_condition:
+            active_callbacks += 1
+        try:
+            yield
+        finally:
+            with callback_condition:
+                active_callbacks -= 1
+                callback_condition.notify_all()
+
     boundary = dict(requests=[], goals=[], cancels=[], checks=[], frames=[], safety=[],
                     hold='navigate' if task_type == 'inspection' else 'follow',
                     accept_hold='', release_accept=threading.Event(),
@@ -124,29 +140,31 @@ def complete_chain(tmp_path, request):
 
     def server(kind, action, name):
         def accept(req):
-            boundary['requests'].append((kind, req))
-            if boundary['accept_hold'] == kind:
-                boundary['release_accept'].wait(10)
-            return GoalResponse.ACCEPT
+            with action_callback():
+                boundary['requests'].append((kind, req))
+                if boundary['accept_hold'] == kind:
+                    boundary['release_accept'].wait(10)
+                return GoalResponse.ACCEPT
 
         def execute(handle):
-            boundary['goals'].append((kind, handle.request))
-            while boundary['hold'] == kind and not handle.is_cancel_requested:
-                if kind != 'compute':
-                    velocity = Twist()
-                    velocity.linear.x = 0.2
-                    command.publish(velocity)
-                time.sleep(0.02)
-            if handle.is_cancel_requested:
-                boundary['cancels'].append(kind)
-                boundary['release_terminal'].wait(10)
-                handle.canceled()
-            else:
-                handle.succeed()
-            result = action.Result()
-            if kind == 'compute':
-                result.nav_path = path
-            return result
+            with action_callback():
+                boundary['goals'].append((kind, handle.request))
+                while boundary['hold'] == kind and not handle.is_cancel_requested:
+                    if kind != 'compute':
+                        velocity = Twist()
+                        velocity.linear.x = 0.2
+                        command.publish(velocity)
+                    time.sleep(0.02)
+                if handle.is_cancel_requested:
+                    boundary['cancels'].append(kind)
+                    boundary['release_terminal'].wait(10)
+                    handle.canceled()
+                else:
+                    handle.succeed()
+                result = action.Result()
+                if kind == 'compute':
+                    result.nav_path = path
+                return result
 
         return ActionServer(fake, action, name, execute_callback=execute,
                             goal_callback=accept, cancel_callback=lambda _: CancelResponse.ACCEPT,
@@ -210,6 +228,32 @@ def complete_chain(tmp_path, request):
             task_type=task_type, request_json=json.dumps(config)))
 
     def cleanup():
+        def stop_process(child, sig):
+            if child is not None and child.poll() is None:
+                child.send_signal(sig)
+                try:
+                    child.wait(timeout=7)
+                except subprocess.TimeoutExpired:
+                    child.kill()
+                    child.wait(timeout=3)
+                    raise RuntimeError('test subprocess did not stop gracefully')
+
+        def abort_unsafe_cleanup(error):
+            # Continuing pytest or destroying ROS objects with live callbacks is unsafe.
+            # The test runner must invoke this suite in an isolated process.
+            print(f'FATAL: complete-chain teardown failed: {error}', file=sys.stderr, flush=True)
+            try:
+                for child in (manager_process, process):
+                    if child is not None and child.poll() is None:
+                        try:
+                            child.kill()
+                            child.wait(timeout=3)
+                        except (OSError, subprocess.TimeoutExpired) as child_error:
+                            print(f'FATAL: test subprocess cleanup: {child_error}',
+                                  file=sys.stderr, flush=True)
+            finally:
+                os._exit(1)
+
         boundary['hold'] = ''
         boundary['release_accept'].set()
         boundary['release_terminal'].set()
@@ -218,22 +262,27 @@ def complete_chain(tmp_path, request):
         flags.pop('feedback_stamp', None)
         sensors.rtk_status = None
         sensors.rtk_freeze.clear()
-        if manager is not None:
-            manager.shutdown_tasks()
-        if manager_process is not None and manager_process.poll() is None:
-            manager_process.terminate()
-            manager_process.wait(timeout=7)
-        time.sleep(0.2)
-        executor.shutdown(timeout_sec=3)
-        thread.join(timeout=3)
+        try:
+            if manager is not None:
+                manager.shutdown_tasks()
+                wait_for(lambda: not status()['active'], timeout=10)
+            stop_process(manager_process, signal.SIGTERM)
+            with callback_condition:
+                if not callback_condition.wait_for(lambda: active_callbacks == 0, timeout=10):
+                    raise RuntimeError('action callbacks did not finish')
+            if not executor.shutdown(timeout_sec=10):
+                raise RuntimeError('executor callbacks did not finish')
+            thread.join(timeout=10)
+            if thread.is_alive():
+                raise RuntimeError('executor spin thread did not exit')
+            stop_process(process, signal.SIGINT)
+        except Exception as error:
+            abort_unsafe_cleanup(error)
         for item in servers:
             item.destroy()
         for node in (manager, bridge, provider, fake, amcl):
             if node is not None:
                 node.destroy_node()
-        if process.poll() is None:
-            process.send_signal(signal.SIGINT)
-            process.wait(timeout=4)
         log.close()
         manager_log.close()
         rclpy.shutdown()
@@ -375,6 +424,18 @@ def test_manual_takeover_and_held_emergency_require_explicit_new_start(complete_
 LATE_MATRIX = [(source, 'inspection', 'navigate') for source in ('amcl', 'rtk_ekf')]
 LATE_MATRIX += [(source, 'coverage', stage) for source in ('amcl', 'rtk_ekf')
                 for stage in ('compute', 'approach', 'follow')]
+
+
+@pytest.mark.parametrize('complete_chain', [('amcl', 'inspection', 'navigate'),
+                                            ('rtk_ekf', 'coverage', 'compute')], indirect=True)
+def test_teardown_drains_active_task_with_goal_acceptance_held(complete_chain):
+    io = complete_chain
+    stage = io['boundary']['hold']
+    io['boundary']['accept_hold'] = stage
+    assert io['start']().accepted
+    wait_for(lambda: any(kind == stage for kind, _ in io['boundary']['requests']))
+    assert io['status']()['active']
+    # Fixture teardown must release the request, cancel and drain it safely.
 
 
 @pytest.mark.parametrize('complete_chain', LATE_MATRIX, indirect=True)

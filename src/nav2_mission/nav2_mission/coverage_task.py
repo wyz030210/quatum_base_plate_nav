@@ -2,6 +2,9 @@
 import copy
 import math
 
+from .coverage.models import Point2D, RegionSnapshot
+from .coverage.region_editor import validate_region
+
 # Catalog of the local planner parameters; values describe the reference vehicle profile.
 # Execution reads the authoritative values under a lease, never writes fixed settings.
 PLANNER_DEFAULTS = {
@@ -47,37 +50,28 @@ def prepare_coverage(request):
         planner[key] = float(value)
     if planner.get('operation_width', 1.0) <= 0:
         raise ValueError('operation_width must be positive')
+    if not -math.pi <= planner.get('default_swath_angle', 0.0) <= math.pi:
+        raise ValueError('default_swath_angle must be radians within [-pi, pi]')
     polygons = copy.deepcopy(request.get('polygons'))
-    if not isinstance(polygons, list) or len(polygons) != 1:
-        raise ValueError('rectangle coverage requires one outer polygon and no holes')
-    points = polygons[0]
-    if not isinstance(points, list):
-        raise ValueError('rectangle points must be a list')
-    if len(points) == 5 and points[0] == points[-1]:
-        points.pop()
-    if len(points) != 4:
-        raise ValueError('rectangle requires four corners')
-    for point in points:
-        if (not isinstance(point, (list, tuple)) or len(point) != 2 or
-                any(not finite(v) for v in point)):
-            raise ValueError('rectangle coordinates must be finite x/y pairs')
-    edges = [(points[(i+1) % 4][0]-p[0], points[(i+1) % 4][1]-p[1])
-             for i, p in enumerate(points)]
-    lengths = [math.hypot(*e) for e in edges]
-    if not all(finite(value) for edge in edges for value in edge) or not all(
-            finite(length) for length in lengths):
-        raise ValueError('rectangle dimensions must be finite')
-    if min(lengths) <= 0:
-        raise ValueError('rectangle must have positive dimensions')
-    for i, (x, y) in enumerate(edges):
-        nx, ny = edges[(i+1) % 4]
-        ox, oy = edges[(i+2) % 4]
-        if (abs((x/lengths[i])*(nx/lengths[(i+1) % 4]) +
-                (y/lengths[i])*(ny/lengths[(i+1) % 4])) > 1e-8 or
-                math.hypot(x+ox, y+oy) > 1e-8*max(lengths)):
-            raise ValueError('coverage polygon must be a simple rectangle')
-    return {'frame_id': frame, 'polygons': [points + [copy.deepcopy(points[0])]],
+    region = coverage_region(polygons)
+    polygon = validate_region(region, planner.get('operation_width'))
+    rings = [polygon.exterior, *polygon.interiors]
+    return {'frame_id': frame, 'polygons': [list(map(list, ring.coords)) for ring in rings],
             'planner': planner}
+
+
+def coverage_region(polygons):
+    """Decode the shared outer-first rings without changing the selected region."""
+    if not isinstance(polygons, list) or not polygons:
+        raise ValueError('coverage requires an outer polygon followed by optional holes')
+    rings = []
+    for ring in polygons:
+        if not isinstance(ring, list):
+            raise ValueError('polygon points must be a list')
+        if any(not isinstance(point, (list, tuple)) or len(point) != 2 for point in ring):
+            raise ValueError('polygon coordinates must be finite x/y pairs')
+        rings.append(tuple(Point2D(*point) for point in ring))
+    return RegionSnapshot(rings[0], tuple(rings[1:]))
 
 
 class CoverageTask:

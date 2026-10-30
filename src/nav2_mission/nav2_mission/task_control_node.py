@@ -13,6 +13,7 @@ from rclpy.node import Node
 from rclpy.signals import SignalHandlerOptions
 from std_msgs.msg import String
 
+from .coverage_editor_ros import CoverageEditorRos
 from .coverage_task import CoverageTask
 from .coverage_task_ros import RosCoverage
 from .task_control import TaskManager
@@ -66,6 +67,7 @@ class TaskControlNode(Node):
             self, param('coverage_action_name'), param('coverage_prepare_service'),
             param('coverage_state_topic'), ownership=self.ownership)
         self.manager.handlers['coverage'] = CoverageTask(self.coverage_adapter)
+        self.coverage_editor = CoverageEditorRos(self, self.manager)
         self.task_services = [
             self.create_service(StartTask, '/task_control/start', self.start_task),
             self.create_service(CancelTask, '/task_control/cancel', self.cancel_task),
@@ -125,6 +127,7 @@ class TaskControlNode(Node):
     def tick(self):
         self.stop_adapter.beat()
         self.manager.tick()
+        self.coverage_editor.publish()
         if not self.manager.active or self.manager.status()['phase'] == 'stopping':
             self.stop_adapter.request_stop('')
         self.status_publisher.publish(String(
