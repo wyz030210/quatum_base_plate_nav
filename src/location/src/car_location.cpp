@@ -14,6 +14,9 @@
 #include <sensor_msgs/msg/nav_sat_fix.hpp>     //GPS 原始定位消息类型
 #include <deque>
 #include <algorithm>
+#include <sstream>
+#include <unistd.h>
+#include <std_msgs/msg/string.hpp>
 
 //宏定义(确保 M_PI 有定义。不同平台/编译器的 <cmath> 中 M_PI 不一定存在，这里手动兜底。)
 #ifndef M_PI
@@ -27,6 +30,45 @@ std::atomic<bool> running(true);                                                
 std::unique_ptr<CoordinateConverter> coordinate_converter;                       //坐标转换器（GPS 经纬度 → 局部 XY 坐标）
 rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_publisher;            //发布 /odometry/gps 话题
 rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr navsatfix_publisher;   //发布 /gps/fix 话题
+
+// Independent raw measurement provenance. Legacy fix/pose transport is retained.
+std::string sourceJson(const RtkSourceState & state, const std::string & instance,
+                       uint64_t status_seq, const RtkSourceState & used,
+                       double datum_lat, double datum_lon) {
+    std::ostringstream out;
+    out << std::boolalpha << std::setprecision(15)
+        << "{\"schema_version\":1,\"driver_instance_id\":\"" << instance
+        << "\",\"status_seq\":" << status_seq
+        << ",\"connection_generation\":" << state.connection_generation
+        << ",\"discontinuity_sequence\":" << state.discontinuity_sequence
+        << ",\"connected\":" << state.connected << ",\"ready\":" << state.ready
+        << ",\"frame_id\":\"map\",\"base_frame_id\":\"base_link\""
+        << ",\"datum_lat\":" << datum_lat << ",\"datum_lon\":" << datum_lon
+        << ",\"calibration_id\":\"east_clockwise_ant0.319\""
+        << ",\"published_position_seq\":" << used.position.sequence
+        << ",\"published_quality_seq\":" << used.quality.sequence
+        << ",\"published_heading_seq\":" << used.heading.sequence
+        << ",\"published_generation\":" << used.connection_generation;
+    const auto source = [&out](const char * name, const SourceMeasurement & value) {
+        out << ",\"" << name << "\":{\"sequence\":" << value.sequence
+            << ",\"epoch_us\":" << value.epoch_us << ",\"valid\":" << value.valid
+            << ",\"age_sec\":";
+        if (value.age_sec < 0) out << "null"; else out << value.age_sec;
+        out << ",\"reason\":\"" << value.reason << "\"}";
+    };
+    for (const auto & entry : {std::make_pair("position", &used.position),
+            std::make_pair("quality", &used.quality), std::make_pair("heading", &used.heading)}) {
+        out << ",\"published_" << entry.first << "_age_sec\":";
+        if (!entry.second->sequence) out << "null";
+        else out << std::chrono::duration<double>(
+            std::chrono::steady_clock::now() - entry.second->received).count();
+    }
+    source("position", state.position);
+    source("quality", state.quality);
+    source("heading", state.heading);
+    out << "}";
+    return out.str();
+}
 
 //将角度归一化到 [-180°, 180°] 范围内。
 double normalizeAngleDeg(double angle) {
@@ -240,6 +282,13 @@ int main(int argc, char* argv[]) {
     navsatfix_publisher = node->create_publisher<sensor_msgs::msg::NavSatFix>("/gps/fix", 10);
     odom_publisher = node->create_publisher<nav_msgs::msg::Odometry>("/odometry/gps", 10);
 
+    auto source_publisher = node->create_publisher<std_msgs::msg::String>(
+        "/localization/rtk_source_state", 10);
+    const auto instance = std::to_string(getpid()) + "-" + std::to_string(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    uint64_t status_seq = 0;
+    RtkSourceState published_evidence;
+
     // ====== 串口初始化与启动 ======
     SerialReader reader;
     
@@ -257,7 +306,8 @@ int main(int argc, char* argv[]) {
     std::chrono::system_clock::time_point last_published{};
     
     while (running && rclcpp::ok()) {
-        RTKData data = reader.getLatestData();      //获取最新 RTK 数据
+        RtkSourceState used;
+        RTKData data = reader.getLatestData(&used);      //获取最新 RTK 数据
         displayData(data);
         
         if (data.data_valid) {
@@ -273,9 +323,14 @@ int main(int argc, char* argv[]) {
                 publishNavSatFix(data, node);
                 publishOdometry(data, node);
                 last_published = data.timestamp;
+                published_evidence = used;
             }
         }
         
+        std_msgs::msg::String source_status;
+        source_status.data = sourceJson(reader.getSourceState(), instance, ++status_seq,
+            published_evidence, datum_lat, datum_lon);
+        source_publisher->publish(source_status);
         rclcpp::spin_some(node);                                           //处理 ROS 回调和异步事件
         rate.sleep();                                                      //保持 20Hz 帧率
     }

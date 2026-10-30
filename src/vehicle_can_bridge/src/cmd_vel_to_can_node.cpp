@@ -78,6 +78,12 @@ public:
     task_control_required_ = declare_parameter<bool>("task_control_required", false);
     heartbeat_timeout_sec_ = declare_parameter<double>("heartbeat_timeout_sec", 1.0);
     feedback_required_ = declare_parameter<bool>("feedback_required", true);
+    raw_feedback_required_ = declare_parameter<bool>("raw_feedback_required", task_control_required_);
+    raw_feedback_frame_id_ = declare_parameter<std::string>("raw_feedback_frame_id", "odom");
+    raw_feedback_child_frame_id_ = declare_parameter<std::string>("raw_feedback_child_frame_id", "base_link");
+    if (raw_feedback_frame_id_.empty() || raw_feedback_child_frame_id_.empty()) {
+      throw std::invalid_argument("raw feedback frames must not be empty");
+    }
     feedback_timeout_sec_ = declare_parameter<double>("feedback_timeout_sec", 1.0);
     feedback_future_tolerance_sec_ =
       declare_parameter<double>("feedback_future_tolerance_sec", 0.1);
@@ -117,6 +123,10 @@ public:
       declare_parameter<std::string>("feedback_topic", "/odometry/filtered_odom"),
       rclcpp::SensorDataQoS(),
       [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {feedbackCallback(*msg);});
+    raw_feedback_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+      declare_parameter<std::string>("raw_feedback_topic", "/Odometry"),
+      rclcpp::SensorDataQoS(),
+      [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {rawFeedbackCallback(*msg);});
     emergency_sub_ = create_subscription<std_msgs::msg::Bool>(
       "/task_control/emergency_stop", 10,
       [this](std_msgs::msg::Bool::ConstSharedPtr msg) {
@@ -168,6 +178,9 @@ public:
     safety_timer_ = create_wall_timer(
       std::chrono::duration<double>(publish_period), [this]() {safetyTick();});
 
+    RCLCPP_INFO(get_logger(), "Raw local measurement freshness required=%s topic=%s frames=%s->%s (no raw twist inference)",
+      raw_feedback_required_ ? "true" : "false", get_parameter("raw_feedback_topic").as_string().c_str(),
+      raw_feedback_frame_id_.c_str(), raw_feedback_child_frame_id_.c_str());
     RCLCPP_INFO(get_logger(), "CmdVelToCANNode initialized");
     RCLCPP_INFO(
       get_logger(), "Vehicle parameters: wheel_base=%.2fm, wheel_radius=%.3fm",
@@ -291,9 +304,43 @@ private:
     }
   }
 
+  bool rawFeedbackFresh() const
+  {
+    if (!raw_feedback_required_) return true;
+    if (!raw_feedback_valid_) return false;
+    const double receive_age = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - last_raw_feedback_).count();
+    const double source_age = (now().nanoseconds() - raw_feedback_stamp_ns_) * 1e-9;
+    return receive_age <= feedback_timeout_sec_ && source_age <= feedback_timeout_sec_ &&
+      source_age >= -feedback_future_tolerance_sec_;
+  }
+
+  void rawFeedbackCallback(const nav_msgs::msg::Odometry & msg)
+  {
+    enforceTimeouts();
+    const int64_t stamp = static_cast<int64_t>(msg.header.stamp.sec) * 1000000000LL +
+      msg.header.stamp.nanosec;
+    const double source_age = (now().nanoseconds() - stamp) * 1e-9;
+    const auto & pose = msg.pose.pose;
+    const auto & q = pose.orientation;
+    const double norm = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
+    raw_feedback_valid_ = msg.header.frame_id == raw_feedback_frame_id_ &&
+      msg.child_frame_id == raw_feedback_child_frame_id_ &&
+      msg.header.stamp.sec >= 0 && msg.header.stamp.nanosec < 1000000000U &&
+      stamp > 0 && stamp > last_raw_valid_stamp_ns_ && std::isfinite(pose.position.x) &&
+      std::isfinite(pose.position.y) && std::isfinite(pose.position.z) &&
+      std::isfinite(norm) && std::abs(norm - 1.0) < 0.01 &&
+      source_age <= feedback_timeout_sec_ && source_age >= -feedback_future_tolerance_sec_;
+    raw_feedback_stamp_ns_ = stamp;
+    last_raw_feedback_ = std::chrono::steady_clock::now();
+    if (raw_feedback_valid_) last_raw_valid_stamp_ns_ = stamp;
+    // Raw FAST-LIO carries no measured twist. It is evidence that the EKF's
+    // original measurements are current, never a zero-speed measurement.
+  }
+
   bool feedbackFresh() const
   {
-    if (!feedback_valid_) {
+    if (!feedback_valid_ || !rawFeedbackFresh()) {
       return false;
     }
     const auto receive_age = std::chrono::duration<double>(
@@ -438,7 +485,8 @@ private:
     } else {
       json << "null";
     }
-    json << "}";
+    json << ",\"raw_feedback_required\":" << raw_feedback_required_ <<
+      ",\"raw_feedback_valid\":" << rawFeedbackFresh() << "}";
     state.data = json.str();
     state_pub_->publish(state);
   }
@@ -537,6 +585,14 @@ private:
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr emergency_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr legacy_emergency_sub_;
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_srv_;
+  bool raw_feedback_required_ = false;
+  std::string raw_feedback_frame_id_;
+  std::string raw_feedback_child_frame_id_;
+  bool raw_feedback_valid_ = false;
+  int64_t raw_feedback_stamp_ns_ = 0;
+  int64_t last_raw_valid_stamp_ns_ = 0;
+  std::chrono::steady_clock::time_point last_raw_feedback_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr raw_feedback_sub_;
   bool feedback_required_ = true;
   bool feedback_received_ = false;
   bool feedback_valid_ = false;

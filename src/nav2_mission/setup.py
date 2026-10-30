@@ -26,6 +26,7 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'localization_provider = nav2_mission.localization_provider_node:main',
             'task_control_node = nav2_mission.task_control_node:main',
             'task_control = nav2_mission.task_cli:main',
             'patrol_mission_node = nav2_mission.patrol_mission_node:main',
