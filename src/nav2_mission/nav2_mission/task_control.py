@@ -45,6 +45,7 @@ class TaskManager:
         self.stopping_at = None
         self.authorizing_at = None
         self.desired_result = None
+        self.operation_error = None
 
     def start(self, task_type, request):
         if self.active:
@@ -95,6 +96,7 @@ class TaskManager:
         self.stopping_at = None
         self.authorizing_at = now
         self.desired_result = None
+        self.operation_error = None
         try:
             self.stop.authorize(task_id)
         except Exception as exc:
@@ -204,6 +206,10 @@ class TaskManager:
             if update is not None and update.details:
                 self.current['details'] = copy.deepcopy(update.details)
             done = update is None or update.done
+            if (update is not None and update.done and update.error and
+                    self.operation_error is not None and
+                    self.current['error'] == self.operation_error):
+                self.current['error'] = update.error
             if update is not None and update.error and not update.done:
                 self.current['cleanup_error'] = update.error
             if self.motion_guard is not None:
@@ -231,6 +237,7 @@ class TaskManager:
         if update.details:
             self.current['details'] = copy.deepcopy(update.details)
         if update.error and not update.done:
+            self.operation_error = update.error
             self._stop('failed', update.error)
         elif update.done:
             self._stop('succeeded' if update.succeeded else 'failed', update.error)

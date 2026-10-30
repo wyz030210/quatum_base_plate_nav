@@ -61,6 +61,7 @@ class CoverageOperation:
         self.terminal = None
         self.dispatch_attempted = False
         self.dispatch_error = ''
+        self.failure_observed_at = None
 
     def cancel(self):
         self.canceled = True
@@ -125,10 +126,22 @@ class CoverageOperation:
                                 details=details)
                     code = int(wrapped.result.error_code) if wrapped is not None else None
                     succeeded = update.succeeded and code == 0
+                    error = '' if succeeded else f'coverage error {code}: {update.error}'
+                    bridge_error = self.state.get('error', '')
+                    if (not succeeded and wrapped is not None and not bridge_error and
+                            (not self.canceled or self.failure_observed_at is not None)):
+                        # The result and correlated bridge state use independent ROS
+                        # channels. Stop immediately but allow the final diagnostic
+                        # snapshot to catch up; missing telemetry must not block cleanup.
+                        if self.failure_observed_at is None:
+                            self.failure_observed_at = now
+                        if now - self.failure_observed_at < 1.0:
+                            return ExecutionUpdate('finalizing', error=error, details=details)
+                    if bridge_error and not succeeded:
+                        error += f': {bridge_error}'
                     self.terminal = ExecutionUpdate(
                         self.state.get('phase', 'stopping'), True, succeeded,
-                        '' if succeeded else f'coverage error {code}: {update.error}',
-                        copy.deepcopy(self.state))
+                        error, copy.deepcopy(self.state))
                 elif update.error:
                     return ExecutionUpdate('stopping', error=update.error, details=details)
             if self.terminal:
