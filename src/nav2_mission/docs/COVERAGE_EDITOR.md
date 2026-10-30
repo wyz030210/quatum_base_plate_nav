@@ -26,7 +26,8 @@ ros2 run nav2_mission task_control cancel
 
 `region undo` removes the latest draft vertex. After closing a ring, undo first
 reopens the most recently closed hole, or the outer ring when there are no
-holes; a further undo removes its latest vertex. Other rings are preserved.
+holes; a further undo removes its latest vertex. Undo on an empty hole draft
+abandons that draft and returns to the closed outer ring. Other rings are preserved.
 `region clear` discards the whole session region. `region point --request '{"x":1,"y":2}'` is the CLI equivalent
 of a clicked point. The project service `/task_control/region` (`RegionCommand`)
 accepts the same operations and JSON parameters, returns accepted/message/task_id
@@ -38,13 +39,30 @@ a concurrently submitted edit cannot alter the accepted request.
 
 Coordinates must be finite numeric local-frame metres within +/-10,000,000;
 boolean vertices, self-intersection, holes outside/touching/intersecting each
-other or the outer ring, regions whose width erosion is empty, and long straight
-passages bounded by opposing parallel edges closer than the operation width are
-rejected. The parallel-edge check requires an overlap at least one operation
-width long to avoid rejecting ordinary corners or approximated curves. This is
-conservative: tapered, curved, nonparallel, or shorter narrow features can pass.
-These tests do not prove that every part of a region is traversable; operators
-must inspect the region and the planned path. The checks do not alter the boundary.
+other or the outer ring, regions whose width erosion is empty, and suspected
+narrow passages are rejected. For the latter, after removing collinear vertices,
+the validator samples every boundary segment at intervals no greater than one
+eighth of the operation width, and casts an inward normal up to that width. A
+hit on another boundary rejects the region, except where the hit is on the
+adjacent edge at a convex corner or both points are on the exterior of a wholly
+convex shell. The latter permits smoothly rounded as well as sharp convex tips;
+a convex taper with a narrow tip is consequently allowed if the overall erosion
+is nonempty. Hits involving holes are still checked. This catches representative short, curved and
+tapered passages as well as long parallel ones, while allowing normal sharp
+corners and circular holes in the tested cases. The test is conservative: it may
+reject geometries whose local passage is not intended for travel. It is also
+finite: narrow features between samples, features shorter than the sample
+spacing, and configurations hidden by the convex exemptions may pass. Near
+floating-point tolerance or densely faceted corners, results can differ from an
+ideal continuous width calculation. It does not certify vehicle traversability;
+operators must inspect the region and planned path.
+
+To bound work in the shared manager callback, inputs are rejected as too complex
+when they have more than 64 holes, more than 4,096 vertices, more than 4,096
+normal probes, or a probe-count times segment-count product above 1,000,000.
+Widths at or below 8 micrometres also exceed the numerical sampling limit. Each
+probe intersects the whole polygon boundary, so cost depends on both the probe
+and vertex counts. The checks do not change the selected boundary.
 Angles are radians within [-pi, pi]. Width must be finite and positive.
 The request's shared validator is also used by direct coverage requests and by
 the bridge, so CLI clients cannot bypass these constraints. Direct requests use

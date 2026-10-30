@@ -3,12 +3,16 @@
 import math
 from typing import List, Sequence, Tuple
 
-from shapely.geometry import LineString, LinearRing, Polygon
+from shapely.geometry import LineString, LinearRing, Point, Polygon
+from shapely.ops import nearest_points
 
 from .models import EditMode, Point2D, RegionSnapshot
 
 
 _EPSILON = 1.0e-6
+MAX_GEOMETRY_SAMPLES = 4096
+MAX_HOLES = 64
+MAX_GEOMETRY_WORK = 1000000
 MAX_COORDINATE = 1.0e7  # Metres in a local task frame; keep GEOS arithmetic bounded.
 
 
@@ -48,39 +52,72 @@ def _normalize_ring(
     return tuple(cleaned)
 
 
-def _has_narrow_straight_passage(polygon: Polygon, width: float) -> bool:
-    """Detect opposing parallel boundaries with a substantial narrow overlap.
-
-    Acute corners and polygonal approximations of curves are not themselves
-    evidence of a narrow passage. Require an overlap at least one width long.
-    This conservative check does not prove that all curved or tapered passages fit.
-    """
-    edges = []
-    for ring in (polygon.exterior, *polygon.interiors):
-        coords = list(ring.coords)
-        for a, b in zip(coords, coords[1:]):
+def _has_narrow_sampled_passage(polygon: Polygon, width: float) -> bool:
+    """Probe inward normals at a finite scale; exempt an adjacent convex corner."""
+    # Removing redundant collinear vertices preserves the exact polygon while
+    # ensuring a straight side split into segments still has one corner.
+    polygon = polygon.simplify(0, preserve_topology=True)
+    rings = [list(ring.coords) for ring in (polygon.exterior, *polygon.interiors)]
+    boundary = polygon.boundary
+    shell = Polygon(polygon.exterior)
+    convex_shell = shell.equals(shell.convex_hull)
+    spacing = width / 8.0
+    if spacing <= _EPSILON:
+        raise ValueError("region too complex for operation width validation")
+    sample_count = sum(
+        max(1, math.ceil(math.hypot(b[0] - a[0], b[1] - a[1]) / spacing))
+        for ring in rings for a, b in zip(ring, ring[1:]))
+    segment_count = sum(len(ring) - 1 for ring in rings)
+    if (sample_count > MAX_GEOMETRY_SAMPLES or
+            sample_count * segment_count > MAX_GEOMETRY_WORK):
+        raise ValueError("region too complex for operation width validation")
+    if convex_shell and not polygon.interiors:
+        return False  # Every hit would be an exempt convex-shell hit.
+    tolerance = max(_EPSILON, width * 1e-7)
+    for ring_index, ring in enumerate(rings):
+        count = len(ring) - 1
+        for index in range(count):
+            a, b = ring[index], ring[index + 1]
             dx, dy = b[0] - a[0], b[1] - a[1]
             length = math.hypot(dx, dy)
-            if length > _EPSILON:
-                edges.append((a, (dx / length, dy / length), length))
-    for index, (a, u, length) in enumerate(edges):
-        for b, v, other_length in edges[index + 1:]:
-            if u[0] * v[0] + u[1] * v[1] > -1.0 + 1e-9:
+            if length <= tolerance:
                 continue
-            dx, dy = b[0] - a[0], b[1] - a[1]
-            gap = abs(dx * u[1] - dy * u[0])
-            if gap <= _EPSILON or gap >= width - _EPSILON:
-                continue
-            start = dx * u[0] + dy * u[1]
-            lo, hi = max(0.0, start - other_length), min(length, start)
-            if hi - lo < width - _EPSILON:
-                continue
-            t = (lo + hi) / 2.0
-            first = (a[0] + t * u[0], a[1] + t * u[1])
-            second = (first[0] + (dx * u[1] - dy * u[0]) * u[1],
-                      first[1] - (dx * u[1] - dy * u[0]) * u[0])
-            if polygon.covers(LineString([first, second])):
-                return True
+            ux, uy = dx / length, dy / length
+            nx, ny = -uy, ux
+            samples = max(1, math.ceil(length / spacing))
+            for sample in range(samples):
+                t = length * (sample + 0.5) / samples
+                x, y = a[0] + ux * t, a[1] + uy * t
+                ray = LineString([(x + nx * tolerance, y + ny * tolerance),
+                                  (x + nx * (width - tolerance),
+                                   y + ny * (width - tolerance))])
+                hit = ray.intersection(boundary)
+                if hit.is_empty:
+                    continue
+                end = nearest_points(Point(x, y), hit)[1]
+                # A convex shell can taper to an ordinary sharp or rounded
+                # corner. The erosion check still rejects an entirely narrow
+                # convex region, and hits on holes are still checked below.
+                if (ring_index == 0 and convex_shell and
+                        polygon.exterior.distance(end) <= tolerance):
+                    continue
+                # Adjacent edges meeting at a convex vertex form an ordinary
+                # corner, even when the local gap near its point is tiny.
+                adjacent_corner = False
+                adjacent = ((index, (index - 1) % count),
+                            (index + 1, (index + 1) % count))
+                for vertex_index, other_index in adjacent:
+                    before = ring[(vertex_index - 1) % count]
+                    vertex = ring[vertex_index % count]
+                    after = ring[(vertex_index + 1) % count]
+                    cross = ((vertex[0] - before[0]) * (after[1] - vertex[1]) -
+                             (vertex[1] - before[1]) * (after[0] - vertex[0]))
+                    if cross > 0 and LineString([
+                            ring[other_index], ring[other_index + 1]]).distance(end) <= tolerance:
+                        adjacent_corner = True
+                        break
+                if not adjacent_corner:
+                    return True
     return False
 
 
@@ -91,6 +128,9 @@ def validate_region(
         not valid_coordinate(operation_width) or operation_width <= 0.0
     ):
         raise ValueError("operation_width must be positive")
+    if (len(snapshot.holes) > MAX_HOLES or
+            sum(map(len, (snapshot.outer, *snapshot.holes))) > MAX_GEOMETRY_SAMPLES):
+        raise ValueError("region too complex for operation width validation")
     outer = _normalize_ring(snapshot.outer, counterclockwise=True)
     holes = tuple(
         _normalize_ring(hole, counterclockwise=False)
@@ -115,7 +155,7 @@ def validate_region(
     # never altered or used as a replacement for the operator's boundary.
     if operation_width is not None and (
         polygon.buffer(-operation_width / 2.0).is_empty
-        or _has_narrow_straight_passage(polygon, operation_width)
+        or _has_narrow_sampled_passage(polygon, operation_width)
     ):
         raise ValueError("region is too narrow for the operation width")
     return polygon
@@ -154,6 +194,9 @@ class RegionEditor:
             return
         target = self.draft_hole if self.mode == EditMode.HOLE_DRAFT else self.outer
         if not target:
+            if self.mode == EditMode.HOLE_DRAFT:
+                self.mode = EditMode.OUTER_CLOSED
+                return
             raise ValueError("there is no draft point to undo")
         target.pop()
 
