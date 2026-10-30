@@ -177,6 +177,8 @@ def test_late_first_valid_pose_does_not_hide_missing_initial_trace(coverage_syst
     ([[[False, 0], [8, 0], [8, 8], [0, 8]]], {}),
     ([[[0, 0], [1e200, 0], [8, 8], [0, 8]]], {}),
     ([[[0, 0], [8, 0], [8, 0.2], [0, 0.2]]], {'operation_width': 0.7}),
+    ([[[0, 0], [4, 0], [4, 1.9], [6, 1.9], [6, 2.1], [4, 2.1], [4, 4], [0, 4]]],
+     {'operation_width': 0.6}),
     ([[[0, 0], [8, 0], [8, 8], [0, 8]]], {'default_swath_angle': 3.5}),
 ])
 def test_direct_start_and_bridge_preparation_share_editor_geometry_rejection(

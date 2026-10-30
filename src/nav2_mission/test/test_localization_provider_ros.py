@@ -22,6 +22,7 @@ class Sensors:
     def __init__(self, node):
         self.node = node
         self.source = 'amcl'
+        self.scan_frame = 'base_link'
         self.sequence = 0
         self.rtk_sequence = 0
         self.rtk_sequences = dict(position=0, quality=0, heading=0)
@@ -101,7 +102,7 @@ class Sensors:
             self.rtk.publish(String(data=json.dumps(dict(state, status_seq=self.sequence))))
         laser = LaserScan()
         laser.header.stamp = stamp
-        laser.header.frame_id = 'base_link'
+        laser.header.frame_id = self.scan_frame
         laser.angle_increment = 1.0
         laser.range_min, laser.range_max = 0.1, 20.0
         laser.ranges = [2.0]
@@ -291,3 +292,43 @@ def test_unrepresentable_source_age_is_invalid_without_crashing_provider(provide
     sensors.rtk_status = None
     sensors.rtk_sequence += 2
     until(lambda: sensors.states[-1]['valid'])
+
+
+def test_indoor_launch_defaults_reach_ready_with_matching_amcl():
+    import subprocess
+    import sys
+    from pathlib import Path
+    import yaml
+
+    source = Path(__file__).resolve().parents[2]
+    config = yaml.safe_load((source / 'wheeltec_nav2/param/wheeltec_params/'
+                             'param_mini_diff_indoor.yaml').read_text())
+    amcl = config['amcl']['ros__parameters']
+    rclpy.init()
+    node = rclpy.create_node('amcl')
+    for name in ('base_frame_id', 'odom_frame_id', 'global_frame_id', 'transform_tolerance'):
+        node.declare_parameter(name, amcl[name])
+    sensors = Sensors(node)
+    sensors.scan_frame = 'base_footprint'  # nav2_indoor's scan projection target
+    sensors.established()
+    executor = SingleThreadedExecutor()
+    executor.add_node(node)
+    process = subprocess.Popen(
+        [sys.executable, str(Path(__file__).with_name('indoor_provider_launch_fixture.py')),
+         map_digest(sensors.grid)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            sensors.pump()
+            for _ in range(12):
+                executor.spin_once(timeout_sec=0.001)
+            if sensors.states and sensors.states[-1]['valid']:
+                break
+        assert sensors.states and sensors.states[-1]['valid'], sensors.states[-3:]
+        assert sensors.states[-1]['base_frame_id'] == amcl['base_frame_id']
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
+        executor.shutdown()
+        node.destroy_node()
+        rclpy.shutdown()

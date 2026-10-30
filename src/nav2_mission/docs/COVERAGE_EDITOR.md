@@ -24,9 +24,10 @@ ros2 run nav2_mission task_control status
 ros2 run nav2_mission task_control cancel
 ```
 
-`region undo` removes the latest draft vertex; `region clear` discards the whole
-session region. A closed outer ring is kept immutable until clear, while holes
-may still be added. `region point --request '{"x":1,"y":2}'` is the CLI equivalent
+`region undo` removes the latest draft vertex. After closing a ring, undo first
+reopens the most recently closed hole, or the outer ring when there are no
+holes; a further undo removes its latest vertex. Other rings are preserved.
+`region clear` discards the whole session region. `region point --request '{"x":1,"y":2}'` is the CLI equivalent
 of a clicked point. The project service `/task_control/region` (`RegionCommand`)
 accepts the same operations and JSON parameters, returns accepted/message/task_id
 and a complete session state. `/coverage/editor_state` publishes that state.
@@ -37,8 +38,13 @@ a concurrently submitted edit cannot alter the accepted request.
 
 Coordinates must be finite numeric local-frame metres within +/-10,000,000;
 boolean vertices, self-intersection, holes outside/touching/intersecting each
-other or the outer ring, and regions whose width erosion is empty are rejected.
-The erosion tests feasibility; it does not alter the operator's boundary.
+other or the outer ring, regions whose width erosion is empty, and long straight
+passages bounded by opposing parallel edges closer than the operation width are
+rejected. The parallel-edge check requires an overlap at least one operation
+width long to avoid rejecting ordinary corners or approximated curves. This is
+conservative: tapered, curved, nonparallel, or shorter narrow features can pass.
+These tests do not prove that every part of a region is traversable; operators
+must inspect the region and the planned path. The checks do not alter the boundary.
 Angles are radians within [-pi, pi]. Width must be finite and positive.
 The request's shared validator is also used by direct coverage requests and by
 the bridge, so CLI clients cannot bypass these constraints. Direct requests use
