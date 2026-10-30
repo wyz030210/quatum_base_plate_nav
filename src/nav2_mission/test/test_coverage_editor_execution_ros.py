@@ -3,6 +3,7 @@ import json
 import math
 import subprocess
 import sys
+import threading
 import uuid
 
 import pytest
@@ -15,6 +16,32 @@ import test_coverage_task_ros as coverage_test
 
 coverage_system = coverage_test.coverage_system
 wait_until = coverage_test.wait_until
+
+
+@pytest.fixture
+def delay_failure_telemetry(monkeypatch):
+    from nav2_mission.coverage_task_ros import RosCoverage
+
+    original = RosCoverage.receive
+    release = threading.Event()
+    delayed = []
+
+    def receive(adapter, message):
+        if json.loads(message.data).get('error'):
+            def deliver():
+                if release.wait(3):
+                    original(adapter, message)
+            thread = threading.Thread(target=deliver)
+            delayed.append(thread)
+            thread.start()
+        else:
+            original(adapter, message)
+
+    monkeypatch.setattr(RosCoverage, 'receive', receive)
+    yield release
+    release.set()
+    for thread in delayed:
+        thread.join(timeout=3)
 
 
 def draw(call, operation, points):
@@ -175,6 +202,37 @@ def test_authoritative_headland_rejects_region_before_planning(coverage_system):
     ended = wait_until(lambda: value if not (value := status())['active'] else None)
     assert ended['result'] == 'failed' and 'headland' in ended['error'], ended
     assert not boundary['requests'] and ended['cleanup_confirmed']
+
+
+def test_failure_detail_arriving_after_action_result_is_reported(
+        delay_failure_telemetry, coverage_system):
+    _, status, call, boundary = coverage_system
+    started = call(StartTask, '/task_control/start', StartTask.Request(
+        task_type='coverage', request_json=json.dumps({
+            'frame_id': 'map', 'polygons': [[[0, 0], [8, 0], [8, 0.8], [0, 0.8]]],
+            'planner': {'operation_width': 0.7}})))
+    assert started.accepted
+    stopping = wait_until(lambda: value if (value := status())['phase'] == 'stopping'
+                          else None)
+    assert stopping['active'] and boundary['stop_state']['stop_requested']
+    delay_failure_telemetry.set()
+    ended = wait_until(lambda: value if not (value := status())['active'] else None)
+    assert ended['result'] == 'failed' and 'headland' in ended['error'], ended
+    assert ended['cleanup_confirmed'] and not boundary['requests']
+
+
+def test_failure_without_telemetry_finishes_with_generic_error(
+        delay_failure_telemetry, coverage_system):
+    _, status, call, boundary = coverage_system
+    started = call(StartTask, '/task_control/start', StartTask.Request(
+        task_type='coverage', request_json=json.dumps({
+            'frame_id': 'map', 'polygons': [[[0, 0], [8, 0], [8, 0.8], [0, 0.8]]],
+            'planner': {'operation_width': 0.7}})))
+    assert started.accepted
+    ended = wait_until(lambda: value if not (value := status())['active'] else None)
+    assert ended['result'] == 'failed' and 'coverage error 905' in ended['error'], ended
+    assert ended['cleanup_confirmed'] and boundary['stop_state']['stop_requested']
+    assert not delay_failure_telemetry.is_set()
 
 
 @pytest.mark.parametrize('coverage_system', [{'generate_headland': False}], indirect=True)
