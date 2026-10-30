@@ -12,8 +12,11 @@ from .task_adapters import ExecutionUpdate, LocalizationState, StopState
 
 
 def finite_number(value):
-    return (not isinstance(value, bool) and isinstance(value, (int, float)) and
-            math.isfinite(value))
+    try:
+        return (not isinstance(value, bool) and isinstance(value, (int, float)) and
+                math.isfinite(value))
+    except OverflowError:
+        return False
 
 
 def decode_json(text):

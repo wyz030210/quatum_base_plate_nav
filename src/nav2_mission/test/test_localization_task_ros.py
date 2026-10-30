@@ -6,6 +6,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -46,7 +47,7 @@ def wait_for(predicate, timeout=7):
 
 @pytest.fixture
 def complete_chain(tmp_path, request):
-    source, task_type = request.param
+    source, task_type = request.param[:2]
     rclpy.init()
     amcl = Node('amcl')
     for key, value in [('base_frame_id', 'base_link'), ('odom_frame_id', 'odom'),
@@ -80,6 +81,9 @@ def complete_chain(tmp_path, request):
                     hold='navigate' if task_type == 'inspection' else 'follow',
                     accept_hold='', release_accept=threading.Event(),
                     release_terminal=threading.Event(), initialposes=[])
+    process_manager = len(request.param) > 2 and request.param[2] == 'manager_process'
+    if len(request.param) > 2 and not process_manager:
+        boundary['hold'] = request.param[2]
     command = fake.create_publisher(Twist, '/cmd_vel', 10)
     manual = fake.create_publisher(Bool, '/vehicle/remote_manual_override', 10)
     emergency = fake.create_publisher(Bool, '/task_control/emergency_stop', 10)
@@ -153,11 +157,22 @@ def complete_chain(tmp_path, request):
                server(nav_stage, NavigateToPose, '/navigate_to_pose'),
                server('follow', FollowPath, '/follow_path')]
     bridge = CoverageNavPathBridge()
-    manager = TaskControlNode(parameter_overrides=[
+    manager_parameters = [
         Parameter('report_dir', value=str(tmp_path / 'reports')),
         Parameter('map_id', value=map_digest(sensors.grid)),
         Parameter('localization_profile', value='complete-chain-' + source),
-        Parameter('require_localization_schema', value=True)])
+        Parameter('require_localization_schema', value=True)]
+    manager_log = tempfile.TemporaryFile(mode='w+')
+    manager_process = None
+    manager = None
+    if process_manager:
+        args = [sys.executable, '-m', 'nav2_mission.task_control_node', '--ros-args']
+        for value in manager_parameters:
+            args += ['-p', f'{value.name}:={str(value.value).lower()}']
+        manager_process = subprocess.Popen(args, stdout=manager_log, stderr=manager_log,
+                                           env=os.environ.copy())
+    else:
+        manager = TaskControlNode(parameter_overrides=manager_parameters)
     executable = os.environ['COMMAND_ENTRY_EXECUTABLE']
     log = tempfile.TemporaryFile(mode='w+')
     args = [
@@ -168,7 +183,8 @@ def complete_chain(tmp_path, request):
     process = subprocess.Popen(args, stdout=log, stderr=log, env=os.environ.copy())
     executor = MultiThreadedExecutor(num_threads=14)
     for node in (amcl, fake, provider, bridge, manager):
-        executor.add_node(node)
+        if node is not None:
+            executor.add_node(node)
     thread = threading.Thread(target=executor.spin, daemon=True)
     thread.start()
 
@@ -193,29 +209,42 @@ def complete_chain(tmp_path, request):
         return call(StartTask, '/task_control/start', StartTask.Request(
             task_type=task_type, request_json=json.dumps(config)))
 
+    def cleanup():
+        boundary['hold'] = ''
+        boundary['release_accept'].set()
+        boundary['release_terminal'].set()
+        flags.update(raw=True, scan=True, edge=True, local=True, base_tf=True,
+                     global_odom=True, linear=0.0)
+        flags.pop('feedback_stamp', None)
+        sensors.rtk_status = None
+        sensors.rtk_freeze.clear()
+        if manager is not None:
+            manager.shutdown_tasks()
+        if manager_process is not None and manager_process.poll() is None:
+            manager_process.terminate()
+            manager_process.wait(timeout=7)
+        time.sleep(0.2)
+        executor.shutdown(timeout_sec=3)
+        thread.join(timeout=3)
+        for item in servers:
+            item.destroy()
+        for node in (manager, bridge, provider, fake, amcl):
+            if node is not None:
+                node.destroy_node()
+        if process.poll() is None:
+            process.send_signal(signal.SIGINT)
+            process.wait(timeout=4)
+        log.close()
+        manager_log.close()
+        rclpy.shutdown()
+
+    request.addfinalizer(cleanup)
     wait_for(lambda: sensors.states and sensors.states[-1]['valid'])
     wait_for(lambda: boundary['safety'] and boundary['safety'][-1]['stopped'] and
              boundary['safety'][-1]['ready'])
     yield dict(start=start, status=status, call=call, boundary=boundary, sensors=sensors,
-               flags=flags, manual=manual, emergency=emergency, process=process, manager=manager)
-    boundary['hold'] = ''
-    boundary['release_accept'].set()
-    boundary['release_terminal'].set()
-    flags.update(raw=True, scan=True, edge=True, local=True, base_tf=True, linear=0.0)
-    flags.pop('feedback_stamp', None)
-    sensors.rtk_status = None
-    manager.shutdown_tasks()
-    time.sleep(0.2)
-    executor.shutdown(timeout_sec=3)
-    thread.join(timeout=3)
-    for item in servers:
-        item.destroy()
-    for node in (manager, bridge, provider, fake, amcl):
-        node.destroy_node()
-    process.send_signal(signal.SIGINT)
-    process.wait(timeout=4)
-    log.close()
-    rclpy.shutdown()
+               flags=flags, manual=manual, emergency=emergency, process=process,
+               manager_process=manager_process)
 
 
 MATRIX = [(source, task) for source in ('amcl', 'rtk_ekf')
@@ -223,24 +252,51 @@ MATRIX = [(source, task) for source in ('amcl', 'rtk_ekf')
 
 
 @pytest.mark.parametrize('complete_chain', MATRIX, indirect=True)
-def test_source_loss_drains_actions_stops_commands_and_requires_explicit_restart(complete_chain):
+def test_established_localization_allows_task_to_complete_after_fresh_stop(complete_chain):
     io = complete_chain
+    boundary, flags = io['boundary'], io['flags']
+    reply = io['start']()
+    assert reply.accepted, reply.message
+    flags['linear'] = 0.2
+    wait_for(lambda: boundary['frames'] and boundary['frames'][-1][1] > 0)
+    boundary['hold'] = ''
+    wait_for(lambda: io['status']()['phase'] == 'stopping')
+    assert not io['start']().accepted
+    flags['linear'] = 0.0
+    ended = wait_for(lambda: (value if not (value := io['status']())['active'] else None))
+    assert ended['task_id'] == reply.task_id and ended['result'] == 'succeeded'
+    assert ended['cleanup_confirmed'] and not boundary['initialposes']
+    wait_for(lambda: boundary['frames'][-1][1] == 0)
+    if ended['task_type'] == 'coverage':
+        assert len(boundary['checks']) >= 2
+        follow = next(req for kind, req in boundary['goals'] if kind == 'follow')
+        assert follow.path == boundary['path']
+
+
+def check_source_loss(io, missing):
     start, status, boundary, flags = io['start'], io['status'], io['boundary'], io['flags']
     reply = start()
     assert reply.accepted, reply.message
     flags['linear'] = 0.2
     wait_for(lambda: boundary['frames'] and boundary['frames'][-1][1] > 0)
-    if reply.accepted and io['sensors'].source == 'amcl':
-        flags['scan'] = False
+    if missing == 'source':
+        if io['sensors'].source == 'amcl':
+            flags['scan'] = False
+        else:
+            io['sensors'].rtk_freeze.add('position')
+    elif missing in ('position', 'quality', 'heading'):
+        io['sensors'].rtk_freeze.add(missing)
     else:
-        flags['raw'] = False
+        flags[missing] = False
     stopping = wait_for(lambda: (value if (value := status())['phase'] == 'stopping' else None))
     assert stopping['active'] and stopping['error']
     wait_for(lambda: boundary['cancels'])
     wait_for(lambda: boundary['frames'][-1][1] == 0)
     assert not start().accepted
     # Cancel acceptance cannot release ownership, even after source recovery.
-    flags.update(raw=True, scan=True, linear=0.0)
+    flags.update(raw=True, scan=True, edge=True, local=True, base_tf=True,
+                 global_odom=True, linear=0.0)
+    io['sensors'].rtk_freeze.clear()
     flags['feedback_stamp'] = io['sensors'].node.get_clock().now().to_msg()
     time.sleep(0.4)
     boundary['release_terminal'].set()
@@ -255,11 +311,114 @@ def test_source_loss_drains_actions_stops_commands_and_requires_explicit_restart
     assert len(boundary['goals']) == count
     reset = io['call'](Trigger, '/task_control/reset_stop', Trigger.Request())
     assert reset.success, reset.message
-    second = start()
-    assert second.accepted and second.task_id != reply.task_id, second.message
+    second = wait_for(lambda: value if (value := start()).accepted else None)
+    assert second.task_id != reply.task_id
     io['call'](CancelTask, '/task_control/cancel', CancelTask.Request(task_id=second.task_id))
     wait_for(lambda: not status()['active'])
     if ended['task_type'] == 'coverage':
         assert len(boundary['checks']) >= 2
         follow = next(req for kind, req in boundary['goals'] if kind == 'follow')
         assert follow.path == boundary['path']
+
+
+@pytest.mark.parametrize('complete_chain', MATRIX, indirect=True)
+@pytest.mark.parametrize('missing', ['raw', 'local', 'edge', 'base_tf', 'source'])
+def test_source_loss_drains_actions_stops_commands_and_requires_explicit_restart(
+        complete_chain, missing):
+    check_source_loss(complete_chain, missing)
+
+
+RTK_MATRIX = [('rtk_ekf', task) for task in ('inspection', 'coverage')]
+
+
+@pytest.mark.parametrize('complete_chain', RTK_MATRIX, indirect=True)
+@pytest.mark.parametrize('missing', ['quality', 'heading', 'global_odom'])
+def test_independent_rtk_and_global_ekf_evidence_cannot_be_hidden(complete_chain, missing):
+    check_source_loss(complete_chain, missing)
+
+
+@pytest.mark.parametrize('complete_chain', MATRIX, indirect=True)
+def test_manual_takeover_and_held_emergency_require_explicit_new_start(complete_chain):
+    io = complete_chain
+    boundary, flags = io['boundary'], io['flags']
+    reply = io['start']()
+    assert reply.accepted, reply.message
+    flags['linear'] = 0.2
+    wait_for(lambda: boundary['frames'] and boundary['frames'][-1][1] > 0)
+    io['manual'].publish(Bool(data=True))
+    wait_for(lambda: boundary['cancels'])
+    wait_for(lambda: boundary['frames'][-1][1] == 0)
+    flags['linear'] = 0.0
+    boundary['release_terminal'].set()
+    ended = wait_for(lambda: (value if not (value := io['status']())['active'] else None))
+    assert ended['task_id'] == reply.task_id and ended['result'] in ('failed', 'canceled')
+    count = len(boundary['goals'])
+    io['manual'].publish(Bool(data=False))
+    wait_for(lambda: not boundary['safety'][-1]['manual_override'])
+    time.sleep(0.2)
+    assert len(boundary['goals']) == count and boundary['frames'][-1][1] == 0
+    io['emergency'].publish(Bool(data=True))
+    wait_for(lambda: boundary['safety'][-1]['emergency_stop'])
+    assert not io['start']().accepted
+    assert not io['call'](Trigger, '/task_control/reset_stop', Trigger.Request()).success
+    io['emergency'].publish(Bool(data=False))
+    time.sleep(0.1)
+    assert not io['start']().accepted, 'Clearing the input does not reset a held emergency stop'
+    assert io['call'](Trigger, '/task_control/reset_stop', Trigger.Request()).success
+    second = wait_for(lambda: value if (value := io['start']()).accepted else None)
+    assert second.task_id != reply.task_id
+    io['call'](CancelTask, '/task_control/cancel', CancelTask.Request(task_id=second.task_id))
+    wait_for(lambda: not io['status']()['active'])
+    assert not boundary['initialposes']
+
+
+LATE_MATRIX = [(source, 'inspection', 'navigate') for source in ('amcl', 'rtk_ekf')]
+LATE_MATRIX += [(source, 'coverage', stage) for source in ('amcl', 'rtk_ekf')
+                for stage in ('compute', 'approach', 'follow')]
+
+
+@pytest.mark.parametrize('complete_chain', LATE_MATRIX, indirect=True)
+def test_source_loss_revokes_late_acceptance_at_each_motion_stage(complete_chain):
+    io = complete_chain
+    boundary, flags = io['boundary'], io['flags']
+    stage = boundary['hold']
+    boundary['accept_hold'] = stage
+    reply = io['start']()
+    assert reply.accepted, reply.message
+    wait_for(lambda: any(kind == stage for kind, _ in boundary['requests']))
+    flags['raw'] = False
+    wait_for(lambda: io['status']()['phase'] == 'stopping')
+    assert not io['start']().accepted
+    boundary['release_accept'].set()
+    wait_for(lambda: stage in boundary['cancels'])
+    # Acknowledged cancellation still owns a nonterminal downstream action.
+    flags['raw'] = True
+    wait_for(lambda: io['sensors'].states[-1]['valid'])
+    time.sleep(0.2)
+    assert io['status']()['active'] and not io['start']().accepted
+    assert boundary['frames'][-1][1] == 0
+    boundary['release_terminal'].set()
+    ended = wait_for(lambda: (value if not (value := io['status']())['active'] else None))
+    assert ended['task_id'] == reply.task_id and ended['result'] == 'failed'
+    assert ended['cleanup_confirmed']
+    expected = {'navigate': ['navigate'], 'compute': ['compute'],
+                'approach': ['compute', 'approach'], 'follow': ['compute', 'approach', 'follow']}
+    assert [kind for kind, _ in boundary['goals']] == expected[stage]
+
+
+@pytest.mark.parametrize(
+    'complete_chain', [('amcl', 'coverage', 'manager_process')], indirect=True)
+def test_supervisor_process_loss_inhibits_ongoing_downstream_commands(complete_chain):
+    io = complete_chain
+    boundary = io['boundary']
+    reply = io['start']()
+    assert reply.accepted, reply.message
+    io['flags']['linear'] = 0.2
+    wait_for(lambda: boundary['frames'] and boundary['frames'][-1][1] > 0)
+    io['manager_process'].kill()
+    io['manager_process'].wait(timeout=3)
+    wait_for(lambda: boundary['safety'][-1]['fault'] == 'heartbeat_timeout')
+    wait_for(lambda: boundary['frames'][-1][1] == 0)
+    assert boundary['safety'][-1]['stop_requested'] and not boundary['safety'][-1]['ready']
+    time.sleep(0.3)  # The downstream fake still sends fresh motion commands.
+    assert boundary['frames'][-1][1] == 0

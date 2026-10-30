@@ -24,6 +24,8 @@ class Sensors:
         self.source = 'amcl'
         self.sequence = 0
         self.rtk_sequence = 0
+        self.rtk_sequences = dict(position=0, quality=0, heading=0)
+        self.rtk_freeze = set()
         self.rtk_status = None
         self.rtk_received = time.monotonic()
         durable = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
@@ -61,7 +63,7 @@ class Sensors:
         self.map.publish(self.grid)
 
     def pump(self, *, raw=True, scan=True, edge=True, frozen=None, local=True, base_tf=True,
-             linear=0.0, feedback_stamp=None):
+             linear=0.0, feedback_stamp=None, global_odom=True):
         stamp = frozen or self.node.get_clock().now().to_msg()
         odom = Odometry()
         odom.header.stamp = stamp
@@ -77,16 +79,19 @@ class Sensors:
             odom.header.stamp = stamp
         if self.source == 'rtk_ekf':
             odom.header.frame_id = 'map'
-            self.global_odom.publish(odom)
+            if global_odom:
+                self.global_odom.publish(odom)
             if self.rtk_status is None:
                 self.rtk_sequence += 1
-                sequence = self.rtk_sequence
                 state = dict(schema_version=1, driver_instance_id='test-driver',
                              connection_generation=1, discontinuity_sequence=1,
                              connected=True, ready=True, frame_id='map', base_frame_id='base_link',
                              calibration_id='east_clockwise_ant0.319',
                              datum_lat=29.4898045, datum_lon=106.5676103, published_generation=1)
                 for name in ('position', 'quality', 'heading'):
+                    if name not in self.rtk_freeze:
+                        self.rtk_sequences[name] = self.rtk_sequence
+                    sequence = self.rtk_sequences[name]
                     state[name] = dict(valid=True, sequence=sequence, age_sec=0.0)
                     state[f'published_{name}_seq'] = sequence
                     state[f'published_{name}_age_sec'] = 0.0
@@ -264,4 +269,25 @@ def test_restamped_pose_and_frozen_scan_epoch_do_not_prove_scan_processing(provi
     sensors.established()
     pump(0.1, frozen=frozen)
     assert not sensors.states[-1]['valid']
+    until(lambda: sensors.states[-1]['valid'])
+
+
+@pytest.mark.parametrize('provider_system', ['rtk_ekf'], indirect=True)
+def test_unrepresentable_source_age_is_invalid_without_crashing_provider(provider_system):
+    sensors, provider, pump, until = provider_system
+    until(lambda: sensors.states and sensors.states[-1]['valid'])
+    sensors.rtk_status = dict(
+        schema_version=1, driver_instance_id='test-driver', connection_generation=1,
+        discontinuity_sequence=1, connected=True, ready=True, frame_id='map',
+        base_frame_id='base_link', calibration_id='east_clockwise_ant0.319',
+        datum_lat=29.4898045, datum_lon=106.5676103, published_generation=1)
+    for name in ('position', 'quality', 'heading'):
+        sensors.rtk_status[name] = dict(valid=True, sequence=sensors.rtk_sequence + 1, age_sec=0.0)
+        sensors.rtk_status[f'published_{name}_seq'] = sensors.rtk_sequence + 1
+        sensors.rtk_status[f'published_{name}_age_sec'] = 0.0
+    sensors.rtk_status['position']['age_sec'] = 10 ** 400
+    pump(0.15)
+    assert not sensors.states[-1]['valid']
+    sensors.rtk_status = None
+    sensors.rtk_sequence += 2
     until(lambda: sensors.states[-1]['valid'])
