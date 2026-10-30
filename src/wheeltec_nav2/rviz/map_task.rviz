@@ -71,30 +71,35 @@ Visualization Manager:
       Use Timestamp: false
       Value: true
     - Class: rviz_default_plugins/MarkerArray
+      Name: Coverage Region
       Enabled: true
-      Name: Coverage Markers
-      Namespaces:
-        {}
       Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
+        Value: /coverage/region_markers
         Reliability Policy: Reliable
-        Value: /coverage_ui/markers
-      Value: true
-    - Alpha: 1
-      Class: rviz_default_plugins/Polygon
-      Color: 255; 210; 0
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
+    - Class: rviz_default_plugins/Path
+      Name: Accepted Coverage Path
       Enabled: true
-      Name: Coverage Polygon
       Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        Filter size: 10
-        History Policy: Keep Last
+        Value: /coverage/planned_path
         Reliability Policy: Reliable
-        Value: /coverage_ui/polygon
-      Value: true
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
+      Line Style: Lines
+      Line Width: 0.04
+      Color: 0; 255; 0
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Executed Coverage Trace
+      Enabled: true
+      Topic:
+        Value: /coverage/executed_trace
+        Reliability Policy: Reliable
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Depth: 1
     - Alpha: 1
       Buffer Length: 1
       Class: rviz_default_plugins/Path

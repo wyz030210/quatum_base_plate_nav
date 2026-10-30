@@ -188,6 +188,7 @@ def generate_launch_description():
             DeclareLaunchArgument("use_task_control", default_value="false"),
             DeclareLaunchArgument("task_map_id", default_value=""),
             DeclareLaunchArgument("task_localization_profile", default_value=""),
+            DeclareLaunchArgument("task_timeout_sec", default_value="600.0"),
             DeclareLaunchArgument("use_rviz", default_value="true"),
             DeclareLaunchArgument(
                 "use_composition",
@@ -230,17 +231,22 @@ def generate_launch_description():
                 package="nav2_mission", executable="task_control_node", name="task_control_node",
                 condition=IfCondition(LaunchConfiguration("use_task_control")),
                 parameters=[{
-                    "use_sim_time": ParameterValue(LaunchConfiguration("use_sim_time"), value_type=bool),
+                    "use_sim_time": ParameterValue(
+                        LaunchConfiguration("use_sim_time"), value_type=bool),
                     "map_id": ParameterValue(LaunchConfiguration("task_map_id"), value_type=str),
                     "localization_profile": ParameterValue(
                         LaunchConfiguration("task_localization_profile"), value_type=str),
                     "require_localization_schema": True,
+                    "task_timeout_sec": ParameterValue(
+                        LaunchConfiguration("task_timeout_sec"), value_type=float),
                 }]),
             Node(
-                package="nav2_mission", executable="localization_provider", name="localization_provider",
+                package="nav2_mission", executable="localization_provider",
+                name="localization_provider",
                 condition=IfCondition(LaunchConfiguration("use_task_control")),
                 parameters=[{
-                    "use_sim_time": ParameterValue(LaunchConfiguration("use_sim_time"), value_type=bool),
+                    "use_sim_time": ParameterValue(
+                        LaunchConfiguration("use_sim_time"), value_type=bool),
                     "source": "amcl",
                     "map_id": ParameterValue(LaunchConfiguration("task_map_id"), value_type=str),
                     "localization_profile": ParameterValue(

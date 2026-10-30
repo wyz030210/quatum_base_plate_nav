@@ -16,7 +16,8 @@ def test_vehicle_entry_enables_one_shared_task_layer(filename, source, navigatio
     nodes = capture_nodes(module)
     description = module.generate_launch_description()
     context = context_for(description, use_task_control='true', use_sim_time='true',
-                          task_map_id='a' * 64, task_localization_profile='field')
+                          task_map_id='a' * 64, task_localization_profile='field',
+                          task_timeout_sec='900.0')
     for item in descendants(description.entities):
         if isinstance(item, OpaqueFunction):
             for action in item.execute(context) or []:
@@ -33,6 +34,7 @@ def test_vehicle_entry_enables_one_shared_task_layer(filename, source, navigatio
         assert params['localization_profile'].evaluate(context) == 'field'
         assert params['use_sim_time'].evaluate(context)
     assert manager['parameters'][0]['require_localization_schema'] is True
+    assert manager['parameters'][0]['task_timeout_sec'].evaluate(context) == 900.0
     base = arguments(include_named(description, context, 'auto_control.launch.py'), context)
     assert base['task_control_required'] == 'true' and base['use_sim_time'] == 'true'
     nav = arguments(include_named(description, context, navigation), context)
@@ -72,6 +74,13 @@ def test_task_mode_disables_legacy_selector_and_uses_managed_rviz_goal():
                     if tool['Class'] == 'rviz_default_plugins/SetGoal')
     assert goal_topic(old) == '/goal_pose'
     assert goal_topic(managed) == '/task_control/goal_pose'
+    displayed_topics = {display.get('Topic', {}).get('Value')
+                        for display in managed['Visualization Manager']['Displays']}
+    assert {'/coverage/region_markers', '/coverage/planned_path',
+            '/coverage/executed_trace'} <= displayed_topics
+    click = next(tool for tool in managed['Visualization Manager']['Tools']
+                 if tool['Class'] == 'rviz_default_plugins/PublishPoint')
+    assert click['Topic']['Value'] == '/clicked_point'
 
 
 def test_common_command_converter_uses_selected_clock_and_required_gate():
@@ -83,3 +92,22 @@ def test_common_command_converter_uses_selected_clock_and_required_gate():
     params = converter['parameters'][-1]
     assert params['use_sim_time'].evaluate(context)
     assert params['task_control_required'].evaluate(context)
+
+
+@pytest.mark.parametrize('launch_file', ['nav2_indoor.launch.py', 'nav2.launch.py'])
+def test_selected_rviz_and_laser_projection_follow_task_mode_and_clock(launch_file):
+    from launch.utilities import normalize_to_list_of_substitutions, perform_substitutions
+
+    module = load('wheeltec_nav2/launch/' + launch_file)
+    nodes = capture_nodes(module)
+    description = module.generate_launch_description()
+    for mode, expected in [('true', 'map_task.rviz'), ('false', 'map.rviz')]:
+        context = context_for(description, use_task_control=mode, use_sim_time='true',
+                              map='/tmp/field.yaml')
+        rviz = next(node for node in nodes if node['executable'] == 'rviz2')
+        filename = perform_substitutions(
+            context, normalize_to_list_of_substitutions(rviz['arguments'][-1]))
+        assert filename.endswith(expected)
+        laser = next(node for node in nodes
+                     if node['executable'] == 'pointcloud_to_laserscan_node')
+        assert laser['parameters'][0]['use_sim_time'].perform(context) == 'true'

@@ -57,6 +57,10 @@ ros2 launch robot_bringup indoor_amcl.launch.py map:=/absolute/site/map.yaml use
 
 These launch commands start the vehicle's existing hardware nodes. Run them only
 under the vehicle operating procedure and after the physical acceptance checks.
+The overall task timeout defaults to 600 seconds; set `task_timeout_sec` for the
+planned site operation, including planning, approach and full path execution.
+Cleanup is controlled separately by `cancel_timeout_sec` and stays blocked if
+termination or fresh stopped evidence is missing.
 All components must use the same clock; use `use_sim_time:=true` only when all
 sources and `/clock` are deliberately configured for simulation.
 
@@ -70,6 +74,26 @@ ros2 run nav2_mission task_control start navigation --request '{"frame_id":"map"
 ros2 run nav2_mission task_control status
 ros2 run nav2_mission task_control cancel TASK_ID
 ```
+
+To draw a coverage region in task-mode RViz, use Publish Point to place the
+outer boundary, then close it with `region close_outer`. For each exclusion,
+run `region begin_hole`, place its vertices and run `region close_hole`.
+`region undo` removes the latest edit and `region clear` resets the session.
+The task RViz shows the submitted region, accepted path and observed trace.
+Set the site-specific width and swath angle, inspect validity, then submit:
+
+```bash
+ros2 run nav2_mission task_control region configure --request '{"frame_id":"map","operation_width":0.7,"default_swath_angle":0.3}'
+ros2 run nav2_mission task_control region status
+ros2 run nav2_mission task_control region close_outer
+# Optional: region begin_hole, draw exclusion, then region close_hole.
+ros2 run nav2_mission task_control region start
+```
+
+The editor is in memory and refuses edits or submission during an active task or
+unconfirmed stop. Check each command's `accepted`, `message` and returned
+`state`; invalid geometry must be corrected before submission. Session state is
+not restored after restart.
 
 An accepted cancellation starts cleanup; it is not proof of stopping. Query
 status until `active` is false and `cleanup_confirmed` is true before issuing
