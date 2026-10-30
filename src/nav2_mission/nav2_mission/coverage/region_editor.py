@@ -3,7 +3,7 @@
 import math
 from typing import List, Sequence, Tuple
 
-from shapely.geometry import LinearRing, Polygon
+from shapely.geometry import LineString, LinearRing, Polygon
 
 from .models import EditMode, Point2D, RegionSnapshot
 
@@ -48,6 +48,42 @@ def _normalize_ring(
     return tuple(cleaned)
 
 
+def _has_narrow_straight_passage(polygon: Polygon, width: float) -> bool:
+    """Detect opposing parallel boundaries with a substantial narrow overlap.
+
+    Acute corners and polygonal approximations of curves are not themselves
+    evidence of a narrow passage. Require an overlap at least one width long.
+    This conservative check does not prove that all curved or tapered passages fit.
+    """
+    edges = []
+    for ring in (polygon.exterior, *polygon.interiors):
+        coords = list(ring.coords)
+        for a, b in zip(coords, coords[1:]):
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            length = math.hypot(dx, dy)
+            if length > _EPSILON:
+                edges.append((a, (dx / length, dy / length), length))
+    for index, (a, u, length) in enumerate(edges):
+        for b, v, other_length in edges[index + 1:]:
+            if u[0] * v[0] + u[1] * v[1] > -1.0 + 1e-9:
+                continue
+            dx, dy = b[0] - a[0], b[1] - a[1]
+            gap = abs(dx * u[1] - dy * u[0])
+            if gap <= _EPSILON or gap >= width - _EPSILON:
+                continue
+            start = dx * u[0] + dy * u[1]
+            lo, hi = max(0.0, start - other_length), min(length, start)
+            if hi - lo < width - _EPSILON:
+                continue
+            t = (lo + hi) / 2.0
+            first = (a[0] + t * u[0], a[1] + t * u[1])
+            second = (first[0] + (dx * u[1] - dy * u[0]) * u[1],
+                      first[1] - (dx * u[1] - dy * u[0]) * u[0])
+            if polygon.covers(LineString([first, second])):
+                return True
+    return False
+
+
 def validate_region(
     snapshot: RegionSnapshot, operation_width: float = 0.5
 ) -> Polygon:
@@ -77,7 +113,10 @@ def validate_region(
         raise ValueError("region has no usable area")
     # An erosion is only a feasibility warning/check; the original polygon is
     # never altered or used as a replacement for the operator's boundary.
-    if operation_width is not None and polygon.buffer(-operation_width / 2.0).is_empty:
+    if operation_width is not None and (
+        polygon.buffer(-operation_width / 2.0).is_empty
+        or _has_narrow_straight_passage(polygon, operation_width)
+    ):
         raise ValueError("region is too narrow for the operation width")
     return polygon
 
@@ -90,6 +129,8 @@ class RegionEditor:
         self.holes: List[Tuple[Point2D, ...]] = []
         self.draft_hole: List[Point2D] = []
         self.mode = EditMode.OUTER_DRAFT
+        self._outer_input: List[Point2D] = []
+        self._hole_inputs: List[List[Point2D]] = []
 
     def add_point(self, point: Point2D) -> None:
         if not (valid_coordinate(point.x) and valid_coordinate(point.y)):
@@ -103,7 +144,14 @@ class RegionEditor:
 
     def undo(self) -> None:
         if self.mode == EditMode.OUTER_CLOSED:
-            raise ValueError("there is no draft point to undo; begin a hole or clear")
+            if self.holes:
+                self.holes.pop()
+                self.draft_hole = self._hole_inputs.pop()
+                self.mode = EditMode.HOLE_DRAFT
+            else:
+                self.outer = self._outer_input.copy()
+                self.mode = EditMode.OUTER_DRAFT
+            return
         target = self.draft_hole if self.mode == EditMode.HOLE_DRAFT else self.outer
         if not target:
             raise ValueError("there is no draft point to undo")
@@ -113,6 +161,8 @@ class RegionEditor:
         self.outer.clear()
         self.holes.clear()
         self.draft_hole.clear()
+        self._outer_input.clear()
+        self._hole_inputs.clear()
         self.mode = EditMode.OUTER_DRAFT
 
     def close_outer(self, operation_width: float = 0.5) -> None:
@@ -120,6 +170,7 @@ class RegionEditor:
             raise ValueError("outer boundary is already closed")
         normalized = _normalize_ring(self.outer, counterclockwise=True)
         validate_region(RegionSnapshot(normalized, tuple()), operation_width)
+        self._outer_input = self.outer.copy()
         self.outer = list(normalized)
         self.mode = EditMode.OUTER_CLOSED
 
@@ -135,6 +186,7 @@ class RegionEditor:
         hole = _normalize_ring(self.draft_hole, counterclockwise=False)
         candidate = RegionSnapshot(tuple(self.outer), tuple(self.holes) + (hole,))
         validate_region(candidate, operation_width)
+        self._hole_inputs.append(self.draft_hole.copy())
         self.holes.append(hole)
         self.draft_hole.clear()
         self.mode = EditMode.OUTER_CLOSED

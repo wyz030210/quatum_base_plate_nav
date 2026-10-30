@@ -248,6 +248,7 @@ def generate_launch_description():
                     "use_sim_time": ParameterValue(
                         LaunchConfiguration("use_sim_time"), value_type=bool),
                     "source": "amcl",
+                    "base_frame_id": "base_link",
                     "map_id": ParameterValue(LaunchConfiguration("task_map_id"), value_type=str),
                     "localization_profile": ParameterValue(
                         LaunchConfiguration("task_localization_profile"), value_type=str),

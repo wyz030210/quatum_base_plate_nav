@@ -90,11 +90,84 @@ def test_illegal_vertices_are_rejected_before_geometry_operations(coordinate):
         validate_region(RegionSnapshot((Point2D(coordinate, 0), *_square()[1:]), ()))
 
 
-def test_undo_closed_boundary_does_not_corrupt_valid_region():
+def test_undo_reopens_closed_rings_and_preserves_other_boundaries():
     editor = RegionEditor()
     for point in _square():
         editor.add_point(point)
     editor.close_outer()
-    with pytest.raises(ValueError, match='draft'):
-        editor.undo()
-    assert validate_region(editor.snapshot()).area == 16.0
+    editor.begin_hole()
+    for point in _square(1, 1, 1):
+        editor.add_point(point)
+    editor.close_hole()
+    editor.undo()
+    assert editor.mode == EditMode.HOLE_DRAFT
+    assert editor.draft_hole == list(_square(1, 1, 1))
+    assert editor.outer == list(_square())
+    editor.undo()
+    assert editor.draft_hole == list(_square(1, 1, 1))[:-1]
+    editor.add_point(_square(1, 1, 1)[-1])
+    editor.close_hole()
+    editor.undo()
+    editor.undo()
+    editor.clear()
+    for point in _square():
+        editor.add_point(point)
+    editor.close_outer()
+    editor.undo()
+    assert editor.mode == EditMode.OUTER_DRAFT
+    assert editor.outer == list(_square())
+    editor.undo()
+    assert editor.outer == list(_square())[:-1]
+
+
+def test_long_narrow_protrusion_is_rejected():
+    coordinates = [(0, 0), (4, 0), (4, 1.9), (6, 1.9),
+                   (6, 2.1), (4, 2.1), (4, 4), (0, 4)]
+    with pytest.raises(ValueError, match='too narrow'):
+        validate_region(RegionSnapshot(tuple(Point2D(*p) for p in coordinates), ()), 0.6)
+
+
+def test_tapered_and_curved_boundaries_are_not_automatically_rejected():
+    import math
+    # The pointed end is an ordinary convex corner, not a long straight corridor.
+    triangle = tuple(Point2D(*point) for point in [(0, 0), (4, 0), (2, 4)])
+    assert validate_region(RegionSnapshot(triangle, ()), 0.6).area == 8
+    # A wide L bend with a re-entrant corner remains usable.
+    bend = tuple(Point2D(*point) for point in [
+        (0, 0), (4, 0), (4, 2), (2, 2), (2, 4), (0, 4)])
+    assert validate_region(RegionSnapshot(bend, ()), 0.6).area == 12
+    # The check does not claim to detect every tapered or curved narrow feature.
+    tapered = tuple(Point2D(*point) for point in [
+        (0, 0), (4, 0), (4, 1.85), (6, 1.9),
+        (6, 2.1), (4, 2.15), (4, 4), (0, 4)])
+    assert validate_region(RegionSnapshot(tapered, ()), 0.6).is_valid
+    circle = tuple(Point2D(4 + 3 * math.cos(i * math.pi / 16),
+                           4 + 3 * math.sin(i * math.pi / 16)) for i in range(32))
+    hole = tuple(Point2D(4 + math.cos(i * math.pi / 16),
+                         4 + math.sin(i * math.pi / 16)) for i in range(32))
+    assert validate_region(RegionSnapshot(circle, (hole,)), 0.6).is_valid
+
+
+def test_width_boundary_and_long_narrow_hole_corridor():
+    def rectangle(height):
+        return RegionSnapshot(tuple(Point2D(*p) for p in [
+            (0, 0), (4, 0), (4, height), (0, height)]), ())
+    assert validate_region(rectangle(0.61), 0.6).is_valid
+    with pytest.raises(ValueError, match='too narrow'):
+        validate_region(RegionSnapshot(_square(), (_square(0.2, 1.0, 2.0),)), 0.6)
+
+
+def test_reopening_last_hole_preserves_previous_holes():
+    editor = RegionEditor()
+    for point in _square(size=8):
+        editor.add_point(point)
+    editor.close_outer()
+    for hole in (_square(1, 1, 1), _square(5, 5, 1)):
+        editor.begin_hole()
+        for point in hole:
+            editor.add_point(point)
+        editor.close_hole()
+    editor.undo()
+    assert len(editor.holes) == 1
+    assert set(editor.holes[0]) == set(_square(1, 1, 1))
+    assert editor.draft_hole == list(_square(5, 5, 1))

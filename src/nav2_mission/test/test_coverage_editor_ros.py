@@ -74,7 +74,35 @@ def test_rviz_points_and_cli_operate_on_same_session(ros_system):
             text=True, capture_output=True, timeout=10)
         assert result.returncode == 0, result.stderr
         assert json.loads(result.stdout)['state']['valid']
+        result = subprocess.run(
+            [sys.executable, '-m', 'nav2_mission.task_cli', 'region', 'undo'],
+            text=True, capture_output=True, timeout=10)
+        assert result.returncode == 0, result.stderr
+        reopened = json.loads(result.stdout)['state']
+        assert reopened['mode'] == 'OUTER_DRAFT' and len(reopened['polygons'][0]) == 4
+        assert edit(call, 'close_outer').accepted
+        assert edit(call, 'begin_hole').accepted
+        for x, y in [(1, 1), (2, 1), (2, 2), (1, 2)]:
+            assert edit(call, 'point', x=x, y=y).accepted
+        assert edit(call, 'close_hole').accepted
+        result = subprocess.run(
+            [sys.executable, '-m', 'nav2_mission.task_cli', 'region', 'undo'],
+            text=True, capture_output=True, timeout=10)
+        assert result.returncode == 0, result.stderr
+        reopened = json.loads(result.stdout)['state']
+        assert reopened['mode'] == 'HOLE_DRAFT' and len(reopened['draft_hole']) == 4
+        assert len(reopened['polygons']) == 1 and len(reopened['polygons'][0]) == 4
         assert edit(call, 'clear').accepted
         assert not json.loads(edit(call, 'status').state_json)['valid']
     finally:
         publisher_node.destroy_node()
+
+
+def test_editor_rejects_long_narrow_protrusion(ros_system):
+    call, _, _, _ = ros_system
+    for x, y in [(0, 0), (4, 0), (4, 1.9), (6, 1.9),
+                 (6, 2.1), (4, 2.1), (4, 4), (0, 4)]:
+        assert edit(call, 'point', x=x, y=y).accepted
+    result = edit(call, 'close_outer')
+    assert not result.accepted and 'too narrow' in result.message
+    assert not json.loads(edit(call, 'status').state_json)['valid']
