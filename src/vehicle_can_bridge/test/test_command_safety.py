@@ -174,6 +174,7 @@ def test_legacy_navigation_stops_on_command_loss_then_accepts_a_fresh_goal(bound
 def test_task_stop_dominates_commands_and_release_needs_a_fresh_command(boundary):
     io = boundary(task_control_required=True)
     io.pump(0.15, command=0.2, heartbeat=True)
+    io.until(lambda: io.frames, command=0.2, heartbeat=True)
     assert not any(erpm for _, erpm, _ in io.frames), 'Task startup must inhibit motion'
     io.until(lambda: io.states and io.states[-1]['ready'], heartbeat=True)
     assert io.states[-1]['stop_requested']
@@ -275,6 +276,8 @@ def test_manual_takeover_blocks_auto_and_return_requires_explicit_new_run(bounda
 def test_task_heartbeat_loss_latches_and_cannot_resume_cached_or_new_velocity(boundary):
     io = boundary(task_control_required=True)
     io.pump(0.3)
+    io.states.clear()  # Emulate a first state callback that has not arrived yet.
+    io.until(lambda: io.states)
     assert not io.states[-1]['ready'], 'Missing supervisor must inhibit startup'
     io.until(lambda: io.states[-1]['ready'], heartbeat=True)
     io.set_bool(io.stop, False, heartbeat=True)
@@ -400,7 +403,8 @@ def test_late_safety_sample_cannot_hide_an_expired_active_run(boundary, missing)
                   feedback_timeout_sec=0.2 if missing == 'feedback' else 1.0)
     io.pump(0.2, heartbeat=True)
     io.set_bool(io.stop, False, heartbeat=True)
-    io.until(lambda: io.frames[-1][1] > 0, command=0.2, heartbeat=True)
+    io.frames.clear()  # The first velocity output can follow subscription discovery.
+    io.until(lambda: io.frames and io.frames[-1][1] > 0, command=0.2, heartbeat=True)
     io.pump(0.3, feedback=missing != 'feedback', heartbeat=missing != 'heartbeat')
     io.pump(0.04, heartbeat=True)
     io.pump(0.04, command=0.2, heartbeat=True)
@@ -425,6 +429,7 @@ def test_fresh_ekf_prediction_cannot_confirm_stop_after_raw_source_dies(boundary
 def test_wrong_raw_source_frames_cannot_confirm_stop(boundary, frames):
     io = boundary(task_control_required=True, raw_feedback_required=True)
     io.pump(0.4, heartbeat=True, raw_frame=frames[0], raw_child=frames[1])
+    io.until(lambda: io.states, heartbeat=True, raw_frame=frames[0], raw_child=frames[1])
     assert not io.states[-1]['stopped']
     assert not io.states[-1]['ready']
     assert not io.reset_result(heartbeat=True, raw_frame=frames[0], raw_child=frames[1]).success
