@@ -43,26 +43,35 @@ other or the outer ring, regions whose width erosion is empty, and suspected
 narrow passages are rejected. For the latter, after removing collinear vertices,
 the validator samples every boundary segment at intervals no greater than one
 eighth of the operation width, and casts an inward normal up to that width. A
-hit on another boundary rejects the region, except where the hit is on the
-adjacent edge at a convex corner or both points are on the exterior of a wholly
-convex shell. The latter permits smoothly rounded as well as sharp convex tips;
-a convex taper with a narrow tip is consequently allowed if the overall erosion
-is nonempty. Hits involving holes are still checked. This catches representative short, curved and
-tapered passages as well as long parallel ones, while allowing normal sharp
-corners and circular holes in the tested cases. The test is conservative: it may
-reject geometries whose local passage is not intended for travel. It is also
-finite: narrow features between samples, features shorter than the sample
-spacing, and configurations hidden by the convex exemptions may pass. Near
-floating-point tolerance or densely faceted corners, results can differ from an
-ideal continuous width calculation. It does not certify vehicle traversability;
-operators must inspect the region and planned path.
+hit on another boundary rejects the region, except for a local convex outer
+corner. A corner exemption requires an entirely convex boundary arc no longer
+than six operation widths between the probe and its hit, with a total turn
+no greater than 165 degrees. It also excludes a straight face longer than one
+sixteenth of the width when the arc turns more than 15 degrees on each side of it; such a face is treated as a suspected blunt
+passage end, including when the turns are rounded into small facets.
+The same rule applies to convex and nonconvex outer rings, including faceted
+rounded corners; hits involving holes are checked. This catches representative
+short, curved and tapered passages as well as long parallel ones, while allowing
+normal sharp corners and circular holes in the tested cases.
+
+The test is conservative: a long, very acute corner or a chamfered corner can be
+rejected as a suspected passage. In particular, a near-15-degree (or sharper)
+corner may cross the turn limit; smoothing and sampling can change that result.
+The angle is only an approximate interpretation of the arc rule, not a guaranteed
+threshold for all corners. It is also finite: features between probes or
+shorter than the sample spacing, and some shapes within the corner exemption,
+may pass. Near floating-point tolerance or densely faceted corners, results can
+differ from an ideal continuous width calculation. It does not certify vehicle
+traversability; operators must inspect the region and planned path.
 
 To bound work in the shared manager callback, inputs are rejected as too complex
 when they have more than 64 holes, more than 4,096 vertices, more than 4,096
 normal probes, or a probe-count times segment-count product above 1,000,000.
 Widths at or below 8 micrometres also exceed the numerical sampling limit. Each
 probe intersects the whole polygon boundary, so cost depends on both the probe
-and vertex counts. The checks do not change the selected boundary.
+and vertex counts. Validation runs synchronously and can take seconds near these
+limits; the caps do not make it hard real-time. The checks do not change the
+selected boundary.
 Angles are radians within [-pi, pi]. Width must be finite and positive.
 The request's shared validator is also used by direct coverage requests and by
 the bridge, so CLI clients cannot bypass these constraints. Direct requests use

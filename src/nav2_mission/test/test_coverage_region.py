@@ -279,3 +279,73 @@ def test_width_threshold_after_rotation_and_large_translation(gap, accepted):
     else:
         with pytest.raises(ValueError, match='too narrow'):
             validate_region(region, 0.6)
+
+
+@pytest.mark.parametrize('angle', [0, 0.437])
+def test_convex_flat_ended_taper_with_long_narrow_end_is_rejected(angle):
+    import math
+
+    # Splitting a side also exercises removal of redundant collinear vertices.
+    coordinates = [(0, 0), (15, 0), (30, 0), (30, 0.2), (0, 4)]
+    region = RegionSnapshot(tuple(Point2D(1000 + x * math.cos(angle) - y * math.sin(angle),
+                                          -1000 + x * math.sin(angle) + y * math.cos(angle))
+                                  for x, y in coordinates), ())
+    with pytest.raises(ValueError, match='too narrow'):
+        validate_region(region, 0.6)
+
+
+@pytest.mark.parametrize('angle', [0, 31])
+def test_rounded_convex_corner_of_nonconvex_region_is_accepted(angle):
+    from shapely.affinity import rotate
+    from shapely.geometry import Polygon
+
+    polygon = rotate(Polygon([(0, 0), (8, 0), (1, 4), (1, 3), (0, 3)]).buffer(0.05),
+                     angle)
+    outer = tuple(Point2D(x, y) for x, y in list(polygon.exterior.coords)[:-1])
+    assert validate_region(RegionSnapshot(outer, ()), 0.6).is_valid
+
+
+@pytest.mark.parametrize('gap,accepted', [(0.59, False), (0.6, True), (0.61, True)])
+def test_gap_between_holes_respects_operation_width(gap, accepted):
+    def rectangle(x0, x1):
+        return tuple(Point2D(*p) for p in [(x0, 2), (x1, 2), (x1, 8), (x0, 8)])
+
+    region = RegionSnapshot(_square(size=10), (rectangle(1, 4), rectangle(4 + gap, 8)))
+    if accepted:
+        assert validate_region(region, 0.6).is_valid
+    else:
+        with pytest.raises(ValueError, match='too narrow'):
+            validate_region(region, 0.6)
+
+
+@pytest.mark.parametrize("radius", [0.001, 0.01, 0.05, 0.1])
+def test_narrow_branch_with_rounded_blunt_end_is_rejected(radius):
+    from shapely.geometry import Polygon
+
+    polygon = Polygon([(0, 0), (4, 0), (4, 1.9), (5, 1.9), (5, 2.1),
+                       (4, 2.1), (4, 4), (0, 4)]).buffer(radius)
+    outer = tuple(Point2D(x, y) for x, y in list(polygon.exterior.coords)[:-1])
+    with pytest.raises(ValueError, match='too narrow'):
+        validate_region(RegionSnapshot(outer, ()), 0.6)
+
+
+@pytest.mark.parametrize("resolution", [4, 16, 32])
+def test_narrow_branch_with_semicircular_end_is_rejected(resolution):
+    from shapely.geometry import LineString, Polygon
+
+    room = Polygon([(0, 0), (4, 0), (4, 4), (0, 4)])
+    polygon = room.union(LineString([(3.9, 2), (5, 2)]).buffer(0.1, resolution=resolution))
+    outer = tuple(Point2D(x, y) for x, y in list(polygon.exterior.coords)[:-1])
+    with pytest.raises(ValueError, match='too narrow'):
+        validate_region(RegionSnapshot(outer, ()), 0.6)
+
+
+@pytest.mark.parametrize('radius', [0, 0.01, 0.05])
+def test_ordinary_acute_corner_with_or_without_rounding_is_accepted(radius):
+    from shapely.geometry import Polygon
+
+    polygon = Polygon([(0, 0), (8, 0), (0, 4)])
+    if radius:
+        polygon = polygon.buffer(radius)
+    outer = tuple(Point2D(x, y) for x, y in list(polygon.exterior.coords)[:-1])
+    assert validate_region(RegionSnapshot(outer, ()), 0.6).is_valid
