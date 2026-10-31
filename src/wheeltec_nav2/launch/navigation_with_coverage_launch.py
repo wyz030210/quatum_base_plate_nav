@@ -35,6 +35,7 @@ def generate_launch_description():
     coverage_params_file = LaunchConfiguration("coverage_params_file")
     use_coverage = LaunchConfiguration("use_coverage")
     use_task_control = LaunchConfiguration("use_task_control")
+    use_coverage_gui = LaunchConfiguration("use_coverage_gui")
     use_coverage_server = LaunchConfiguration("use_coverage_server")
     task_file = LaunchConfiguration("task_file")
     use_composition = LaunchConfiguration("use_composition")
@@ -416,7 +417,25 @@ def generate_launch_description():
                 ]
             )
         ),
-        condition=IfCondition(PythonExpression(["'", use_coverage, "'.lower() in ('true', '1') and '", use_task_control, "'.lower() not in ('true', '1')"])),
+        condition=IfCondition(PythonExpression([
+            "'", use_coverage, "'.lower() in ('true', '1') and '",
+            use_task_control, "'.lower() not in ('true', '1') and '",
+            use_coverage_gui, "'.lower() not in ('true', '1')"])),
+    )
+
+    coverage_controls = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution([
+            FindPackageShare('nav2_mission'), 'launch', 'coverage_control.launch.py'])),
+        condition=IfCondition(PythonExpression([
+            "'", use_coverage, "'.lower() in ('true', '1') and '",
+            use_coverage_gui, "'.lower() in ('true', '1')"])),
+        launch_arguments={
+            'coverage_params_file': coverage_params_file, 'use_sim_time': use_sim_time,
+            'use_gui': use_coverage_gui,
+            'enable_execution': use_task_control,
+            'start_editor': PythonExpression([
+                "'", use_task_control, "'.lower() not in ('true', '1')"]),
+        }.items(),
     )
 
     ld = LaunchDescription()
@@ -427,6 +446,9 @@ def generate_launch_description():
     ld.add_action(declare_coverage_params_file_cmd)
     ld.add_action(declare_use_coverage_cmd)
     ld.add_action(DeclareLaunchArgument("use_task_control", default_value="false"))
+    ld.add_action(DeclareLaunchArgument(
+        "use_coverage_gui", default_value="true",
+        description="Open coverage controls with coverage enabled; false for headless use"))
     ld.add_action(declare_use_coverage_server_cmd)
     ld.add_action(declare_task_file_cmd)
     ld.add_action(declare_autostart_cmd)
@@ -449,4 +471,5 @@ def generate_launch_description():
     ld.add_action(load_composable_nodes)
     ld.add_action(coverage_bridge)
     ld.add_action(coverage_selector)
+    ld.add_action(coverage_controls)
     return ld

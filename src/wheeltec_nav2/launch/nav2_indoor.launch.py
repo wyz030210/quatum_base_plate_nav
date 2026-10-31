@@ -69,6 +69,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument("use_task_control", default_value="false"),
+            DeclareLaunchArgument("use_coverage_gui", default_value="true"),
             DeclareLaunchArgument("use_rviz", default_value="false"),
             DeclareLaunchArgument("autostart", default_value="true"),
             # Humble's shared-context lifecycle shutdown can deadlock in the initial TF wait.
@@ -171,6 +172,7 @@ def generate_launch_description():
                     "coverage_params_file": coverage_params_file,
                     "use_coverage": use_coverage,
                     "use_task_control": LaunchConfiguration("use_task_control"),
+                    "use_coverage_gui": LaunchConfiguration("use_coverage_gui"),
                     "use_sim_time": use_sim_time,
                     "slam": "False",
                     "autostart": autostart,

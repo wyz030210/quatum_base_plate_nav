@@ -39,6 +39,7 @@ def generate_launch_description():
         "use_amcl": "false", "slam": "False",
         "use_coverage": use_coverage, "use_coverage_server": use_coverage,
         "use_task_control": config("use_task_control"),
+        "use_coverage_gui": config("use_coverage_gui"),
         **{name: config(name) for name in (
             "task_file", "use_sim_time", "autostart", "use_composition", "use_respawn",
             "log_level", "max_forward_speed", "max_reverse_speed", "max_yaw_rate",
@@ -58,6 +59,7 @@ def generate_launch_description():
         ])),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("use_task_control", default_value="false"),
+        DeclareLaunchArgument("use_coverage_gui", default_value="true"),
         DeclareLaunchArgument("use_rviz", default_value="false"),
         DeclareLaunchArgument("use_coverage", default_value="false"),
         DeclareLaunchArgument("autostart", default_value="true"),

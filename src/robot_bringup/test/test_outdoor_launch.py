@@ -221,8 +221,10 @@ def test_coverage_node_and_lifecycle_switch_together_in_both_modes(coverage):
     for manager in managers:
         params = {k: v for p in manager["parameters"] if isinstance(p, dict) for k, v in p.items()}
         assert ("coverage_server" in params["node_names"].evaluate(context)) is expected
-    for filename in ("coverage_navpath_bridge.launch.py", "coverage_region_selector.launch.py"):
+    for filename in ("coverage_navpath_bridge.launch.py", "coverage_control.launch.py"):
         assert include_named(description, context, filename).condition.evaluate(context) is expected
+    assert not include_named(
+        description, context, "coverage_region_selector.launch.py").condition.evaluate(context)
 
 
 def test_indoor_keeps_legacy_amcl_and_server_defaults():

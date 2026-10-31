@@ -26,6 +26,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'coverage_editor_node = nav2_mission.coverage_editor_node:main',
+            'coverage_control_gui = nav2_mission.coverage_control_gui:main',
             'localization_provider = nav2_mission.localization_provider_node:main',
             'task_control_node = nav2_mission.task_control_node:main',
             'task_control = nav2_mission.task_cli:main',

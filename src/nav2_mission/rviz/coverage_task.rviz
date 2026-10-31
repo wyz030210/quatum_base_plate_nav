@@ -170,6 +170,18 @@ Visualization Manager:
       Line Width: 0.03
       Color: 255; 0; 255
   Enabled: true
+    - Class: rviz_default_plugins/Path
+      Name: Coverage Preview
+      Enabled: true
+      Line Style: Lines
+      Line Width: 0.045
+      Color: 0; 220; 255
+      Topic:
+        Value: /coverage_ui/preview_path
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
   Global Options:
     Background Color: 48; 48; 48
     Fixed Frame: map

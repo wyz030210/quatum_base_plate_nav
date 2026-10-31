@@ -27,6 +27,10 @@
   <exec_depend>python3-yaml</exec_depend>
   <exec_depend>python3-gdal</exec_depend>
   <exec_depend>python3-shapely</exec_depend>
+  <exec_depend>python3-tk</exec_depend>
+  <exec_depend>nav2_common</exec_depend>
+  <exec_depend>opennav_coverage</exec_depend>
+  <exec_depend>nav2_lifecycle_manager</exec_depend>
 
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>

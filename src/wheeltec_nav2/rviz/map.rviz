@@ -262,6 +262,27 @@ Visualization Manager:
         Value: /local_costmap/costmap_updates
       Use Timestamp: false
       Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Coverage Region
+      Enabled: true
+      Topic:
+        Value: /coverage/region_markers
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
+    - Class: rviz_default_plugins/Path
+      Name: Coverage Preview
+      Enabled: true
+      Line Style: Lines
+      Line Width: 0.045
+      Color: 0; 220; 255
+      Topic:
+        Value: /coverage_ui/preview_path
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

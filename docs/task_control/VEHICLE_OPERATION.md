@@ -9,7 +9,14 @@ The selected RViz configuration sends 2D Goal Pose to
 belong to the managed editor. The legacy auto-executing region selector is
 inactive in this mode. Do not separately start old patrol, coverage selector,
 source simulator or another manager. With task mode disabled the original
-ordinary navigation and legacy coverage settings remain available.
+ordinary navigation remains available; the legacy coverage selector can be
+selected with `use_coverage_gui:=false`.
+
+Coverage startup opens the [coverage control window](../../src/nav2_mission/docs/COVERAGE_CONTROLS.md)
+by default. It provides region editing and a compute-only preview on a dedicated
+planner; task-enabled mode also exposes explicit managed start/cancel buttons.
+Set `use_coverage_gui:=false` for headless use. Opening the window or closing a
+polygon never starts a task.
 
 ## Provision a site
 

@@ -1,11 +1,13 @@
-"""Standalone coverage planning and RViz polygon selection."""
+"""Map, shared region editor and GUI preview without vehicle nodes."""
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
@@ -23,38 +25,32 @@ def generate_launch_description():
             default_value=PathJoinSubstitution([share, "rviz", "coverage_preview.rviz"]),
         ),
         DeclareLaunchArgument("use_rviz", default_value="true"),
+        DeclareLaunchArgument("use_coverage_gui", default_value="true"),
+        DeclareLaunchArgument("map", default_value=PathJoinSubstitution([
+            share, "map", "indoor_map.yaml"])),
         Node(
             package="tf2_ros", executable="static_transform_publisher",
             name="coverage_preview_frame", output="screen",
             arguments=["--frame-id", "map", "--child-frame-id", "coverage_preview_origin"],
         ),
-        Node(
-            package="opennav_coverage", executable="opennav_coverage",
-            name="coverage_server", output="screen",
-            parameters=[params_file, {"use_sim_time": False}],
-        ),
+        Node(package="nav2_map_server", executable="map_server", name="map_server",
+             output="screen", parameters=[{'yaml_filename': LaunchConfiguration('map'),
+                                           'use_sim_time': False}]),
         Node(
             package="nav2_lifecycle_manager", executable="lifecycle_manager",
             name="lifecycle_manager_coverage_preview", output="screen",
             parameters=[{
                 "use_sim_time": False, "autostart": True,
-                "node_names": ["coverage_server"],
+                "node_names": ["map_server"],
             }],
         ),
-        Node(
-            package="nav2_mission", executable="coverage_region_selector_node",
-            name="coverage_region_selector", output="screen",
-            parameters=[{
-                "use_sim_time": False, "plan_only": True,
-                "auto_plan_on_close": True, "default_frame_id": "map",
-            }],
-            remappings=[
-                (name, "/coverage_region_selector/" + name)
-                for name in [
-                    "clear", "undo_last_point", "close_polygon",
-                    "execute_polygon", "close_and_execute",
-                ]
-            ],
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(PathJoinSubstitution([
+                FindPackageShare('nav2_mission'), 'launch', 'coverage_control.launch.py'])),
+            launch_arguments={'coverage_params_file': params_file,
+                              'start_editor': 'true', 'enable_execution': 'false',
+                              'use_gui': LaunchConfiguration('use_coverage_gui'),
+                              'use_sim_time': 'false'}.items(),
         ),
         Node(
             package="rviz2", executable="rviz2", name="coverage_preview_rviz",

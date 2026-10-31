@@ -40,7 +40,7 @@ def validate_arguments(context):
         raise RuntimeError(f"map YAML does not exist: {map_path}")
 
     for name in ("use_sim_time", "use_rviz", "use_coverage", "autostart",
-                 "use_composition", "use_respawn", "use_task_control"):
+                 "use_composition", "use_respawn", "use_task_control", "use_coverage_gui"):
         value = LaunchConfiguration(name).perform(context).strip().lower()
         if value not in {"true", "false", "1", "0"}:
             raise RuntimeError(f"{name} must be true or false; got {value!r}")
@@ -128,6 +128,7 @@ def generate_launch_description():
         "wheeltec_nav2", ["launch", "nav2.launch.py"],
         {"map": config("map"), "params": config("params_file"),
          "use_task_control": config("use_task_control"),
+         "use_coverage_gui": config("use_coverage_gui"),
          "use_coverage": PythonExpression([
              "'", config("use_coverage"), "'.lower() in ('true', '1') or '",
              config("use_task_control"), "'.lower() in ('true', '1')"]),
@@ -152,6 +153,7 @@ def generate_launch_description():
         ])),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("use_task_control", default_value="false"),
+        DeclareLaunchArgument("use_coverage_gui", default_value="true"),
         DeclareLaunchArgument("task_map_id", default_value=""),
         DeclareLaunchArgument("task_localization_profile", default_value=""),
         DeclareLaunchArgument("task_timeout_sec", default_value="600.0"),

@@ -39,7 +39,7 @@ def validate_arguments(context):
     if not map_path.is_file():
         raise RuntimeError(f"map YAML does not exist: {map_path}")
 
-    for name in ("use_rviz", "use_sim_time", "use_task_control"):
+    for name in ("use_rviz", "use_sim_time", "use_task_control", "use_coverage_gui"):
         value = LaunchConfiguration(name).perform(context).strip().lower()
         if value not in {"true", "1", "false", "0"}:
             raise RuntimeError(
@@ -160,6 +160,7 @@ def generate_launch_description():
                 "'", use_coverage, "'.lower() in ('true', '1') or '",
                 LaunchConfiguration("use_task_control"), "'.lower() in ('true', '1')"]),
             "use_task_control": LaunchConfiguration("use_task_control"),
+            "use_coverage_gui": LaunchConfiguration("use_coverage_gui"),
             "use_composition": use_composition,
             "max_forward_speed": max_forward_speed,
             "max_reverse_speed": max_reverse_speed,
@@ -186,6 +187,7 @@ def generate_launch_description():
             ),
             DeclareLaunchArgument("use_sim_time", default_value="false"),
             DeclareLaunchArgument("use_task_control", default_value="false"),
+            DeclareLaunchArgument("use_coverage_gui", default_value="true"),
             DeclareLaunchArgument("task_map_id", default_value=""),
             DeclareLaunchArgument("task_localization_profile", default_value=""),
             DeclareLaunchArgument("task_timeout_sec", default_value="600.0"),

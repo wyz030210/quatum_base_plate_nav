@@ -1,5 +1,9 @@
 # Session region editor and reference statistics
 
+The persistent [coverage control window](COVERAGE_CONTROLS.md) provides these
+editing commands as buttons and starts automatically with coverage enabled.
+It also provides compute-only previews, and managed start/cancel in task mode.
+
 The unified `task_control_node` contains the RViz editor component. All service,
 point and manager callbacks use its default mutually exclusive callback group.
 The component calls the same manager start API as `task_control start coverage`;

@@ -8,6 +8,18 @@ Panels:
 Visualization Manager:
   Class: ""
   Displays:
+    - Class: rviz_default_plugins/Map
+      Name: Map
+      Enabled: true
+      Alpha: 0.9
+      Color Scheme: map
+      Draw Behind: true
+      Topic:
+        Value: /map
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        History Policy: Keep Last
     - Class: rviz_default_plugins/Grid
       Name: Grid
       Enabled: true
@@ -24,16 +36,16 @@ Visualization Manager:
       Name: Selected Region
       Enabled: true
       Topic:
-        Value: /coverage_ui/markers
+        Value: /coverage/region_markers
         Depth: 1
         Durability Policy: Transient Local
         Reliability Policy: Reliable
         History Policy: Keep Last
       Namespaces:
-        coverage_ui: true
+        coverage_region: true
     - Class: rviz_default_plugins/Marker
       Name: Coverage Swaths
-      Enabled: true
+      Enabled: false
       Topic:
         Value: /coverage_server/swaths
         Depth: 1

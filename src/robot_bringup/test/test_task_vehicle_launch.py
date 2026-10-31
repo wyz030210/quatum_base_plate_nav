@@ -58,6 +58,7 @@ def test_task_mode_disables_legacy_selector_and_uses_managed_rviz_goal():
         module = load('wheeltec_nav2/launch/navigation_with_coverage_launch.py')
         description = module.generate_launch_description()
         context = context_for(description, use_coverage='true', use_task_control=mode,
+                              use_coverage_gui='false',
                               use_sim_time='true', params_file='/tmp/nav.yaml',
                               coverage_params_file='/tmp/coverage.yaml')
         selector = include_named(description, context, 'coverage_region_selector.launch.py')
