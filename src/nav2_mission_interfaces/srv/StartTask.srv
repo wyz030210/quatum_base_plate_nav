@@ -1,0 +1,7 @@
+# Immutable request-scoped payload. See docs/task_control/README.md.
+string task_type
+string request_json
+---
+bool accepted
+string task_id
+string message

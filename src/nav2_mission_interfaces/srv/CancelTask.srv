@@ -1,0 +1,6 @@
+# Empty id selects the current task. Acceptance is not stop completion.
+string task_id
+---
+bool accepted
+string task_id
+string message

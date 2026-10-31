@@ -1,7 +1,7 @@
 // ROS2 (Humble) port of the original ROS1 vehicle_can_bridge/src/cmd_vel_to_can_node.cpp.
 //
-// This is a line-by-line port of the original CmdVelToCANNode class (Task 4
-// of the vehicle_can_bridge ROS1->ROS2 port plan):
+// Built on the original CmdVelToCANNode ROS1->ROS2 port, with a common
+// automatic-command stop gate and fresh-feedback state contract:
 //
 //  * ros::Publisher/Subscriber -> rclcpp::Publisher/Subscription, same
 //    topic names and queue depths as the original ("/cmd_vel" sub,
@@ -19,15 +19,24 @@
 
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/int32.hpp>
+#include <std_msgs/msg/bool.hpp>
+#include <std_msgs/msg/empty.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <geometry_msgs/msg/twist.hpp>
+#include <nav_msgs/msg/odometry.hpp>
+#include <std_srvs/srv/trigger.hpp>
 #include <vehicle_can_bridge/msg/frame.hpp>
 #include <vehicle_can_bridge/ackermann_steering.hpp>
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <chrono>
 #include <memory>
 #include <stdexcept>
+#include <sstream>
+#include <iomanip>
+#include <string>
 
 namespace
 {
@@ -65,7 +74,113 @@ public:
 
     // 发布状态信息
     status_pub_ = create_publisher<std_msgs::msg::Int32>("/control_mode", rclcpp::QoS(10));
+    command_timeout_sec_ = declare_parameter<double>("command_timeout_sec", 1.0);
+    task_control_required_ = declare_parameter<bool>("task_control_required", false);
+    heartbeat_timeout_sec_ = declare_parameter<double>("heartbeat_timeout_sec", 1.0);
+    feedback_required_ = declare_parameter<bool>("feedback_required", true);
+    raw_feedback_required_ = declare_parameter<bool>("raw_feedback_required", task_control_required_);
+    raw_feedback_frame_id_ = declare_parameter<std::string>("raw_feedback_frame_id", "odom");
+    raw_feedback_child_frame_id_ = declare_parameter<std::string>("raw_feedback_child_frame_id", "base_link");
+    if (raw_feedback_frame_id_.empty() || raw_feedback_child_frame_id_.empty()) {
+      throw std::invalid_argument("raw feedback frames must not be empty");
+    }
+    feedback_timeout_sec_ = declare_parameter<double>("feedback_timeout_sec", 1.0);
+    feedback_future_tolerance_sec_ =
+      declare_parameter<double>("feedback_future_tolerance_sec", 0.1);
+    stopped_hold_sec_ = declare_parameter<double>("stopped_hold_sec", 1.0);
+    stopped_linear_threshold_ = declare_parameter<double>("stopped_linear_threshold", 0.01);
+    stopped_angular_threshold_ = declare_parameter<double>("stopped_angular_threshold", 0.02);
+    stopping_timeout_sec_ = declare_parameter<double>("stopping_timeout_sec", 5.0);
+    const auto publish_period = declare_parameter<double>("safety_publish_period_sec", 0.05);
+    for (const auto & parameter : {
+        "command_timeout_sec", "heartbeat_timeout_sec", "feedback_timeout_sec",
+        "stopped_hold_sec", "stopping_timeout_sec", "safety_publish_period_sec"})
+    {
+      const double value = get_parameter(parameter).as_double();
+      if (!std::isfinite(value) || value <= 0.0) {
+        throw std::invalid_argument(std::string(parameter) + " must be finite and positive");
+      }
+    }
+    for (const auto & parameter : {
+        "feedback_future_tolerance_sec", "stopped_linear_threshold", "stopped_angular_threshold"})
+    {
+      const double value = get_parameter(parameter).as_double();
+      if (!std::isfinite(value) || value < 0.0) {
+        throw std::invalid_argument(std::string(parameter) + " must be finite and nonnegative");
+      }
+    }
+    stop_requested_ = task_control_required_;
+    stop_source_ns_ = now().nanoseconds();
+    state_pub_ = create_publisher<std_msgs::msg::String>("/task_control/state", 10);
+    stop_sub_ = create_subscription<std_msgs::msg::Bool>(
+      "/task_control/stop", 10, [this](std_msgs::msg::Bool::ConstSharedPtr msg) {
+        enforceTimeouts();
+        stop_requested_ = msg->data || !ready();
+        beginStop();
+        sendCombinedControlCommand(0.0, 0.0);
+      });
+    feedback_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+      declare_parameter<std::string>("feedback_topic", "/odometry/filtered_odom"),
+      rclcpp::SensorDataQoS(),
+      [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {feedbackCallback(*msg);});
+    raw_feedback_sub_ = create_subscription<nav_msgs::msg::Odometry>(
+      declare_parameter<std::string>("raw_feedback_topic", "/Odometry"),
+      rclcpp::SensorDataQoS(),
+      [this](nav_msgs::msg::Odometry::ConstSharedPtr msg) {rawFeedbackCallback(*msg);});
+    emergency_sub_ = create_subscription<std_msgs::msg::Bool>(
+      "/task_control/emergency_stop", 10,
+      [this](std_msgs::msg::Bool::ConstSharedPtr msg) {
+        emergency_input_ = msg->data;
+        emergencyInputChanged();
+      });
+    legacy_emergency_sub_ = create_subscription<std_msgs::msg::Bool>(
+      "/coverage/emergency_stop", 10,
+      [this](std_msgs::msg::Bool::ConstSharedPtr msg) {
+        legacy_emergency_input_ = msg->data;
+        emergencyInputChanged();
+      });
+    manual_sub_ = create_subscription<std_msgs::msg::Bool>(
+      "/vehicle/remote_manual_override", 10,
+      [this](std_msgs::msg::Bool::ConstSharedPtr msg) {
+        manual_override_ = msg->data;
+        if (manual_override_) {
+          stop_requested_ = true;
+          beginStop();
+          sendCombinedControlCommand(0.0, 0.0);
+        }
+      });
+    reset_srv_ = create_service<std_srvs::srv::Trigger>(
+      "/task_control/reset_stop",
+      [this](std_srvs::srv::Trigger::Request::ConstSharedPtr,
+      std_srvs::srv::Trigger::Response::SharedPtr response) {
+        enforceTimeouts();
+        if (emergency_input_ || legacy_emergency_input_ || manual_override_ ||
+          (task_control_required_ && !heartbeatFresh()) ||
+          (feedback_required_ && (!feedbackFresh() || !stopped_)))
+        {
+          response->success = false;
+          response->message = "Stop inputs must be clear and fresh feedback must confirm rest";
+          return;
+        }
+        emergency_held_ = false;
+        fault_.clear();
+        stop_requested_ = true;
+        beginStop();
+        response->success = true;
+        response->message = "Stop reset; explicit run request and a new velocity are required";
+      });
+    heartbeat_sub_ = create_subscription<std_msgs::msg::Empty>(
+      "/task_control/heartbeat", 10, [this](std_msgs::msg::Empty::ConstSharedPtr) {
+        enforceTimeouts();
+        heartbeat_received_ = true;
+        last_heartbeat_ = std::chrono::steady_clock::now();
+      });
+    safety_timer_ = create_wall_timer(
+      std::chrono::duration<double>(publish_period), [this]() {safetyTick();});
 
+    RCLCPP_INFO(get_logger(), "Raw local measurement freshness required=%s topic=%s frames=%s->%s (no raw twist inference)",
+      raw_feedback_required_ ? "true" : "false", get_parameter("raw_feedback_topic").as_string().c_str(),
+      raw_feedback_frame_id_.c_str(), raw_feedback_child_frame_id_.c_str());
     RCLCPP_INFO(get_logger(), "CmdVelToCANNode initialized");
     RCLCPP_INFO(
       get_logger(), "Vehicle parameters: wheel_base=%.2fm, wheel_radius=%.3fm",
@@ -76,6 +191,14 @@ public:
       "steering=%.1fdeg",
       max_forward_speed_, max_reverse_speed_, max_angular_speed_, max_steering_angle_deg_);
     RCLCPP_INFO(get_logger(), "CAN ID: ROS_CONTROL=0x%02X (to STM32)", ROS_CONTROL_CAN_ID);
+    RCLCPP_INFO(
+      get_logger(),
+      "Safety: task_control_required=%s, feedback_required=%s, command_timeout=%.3fs, "
+      "heartbeat_timeout=%.3fs, feedback_timeout=%.3fs, stop_hold=%.3fs, "
+      "stop_timeout=%.3fs, zero_linear=%.3fm/s, zero_angular=%.3frad/s, publish=%.3fs",
+      task_control_required_ ? "true" : "false", feedback_required_ ? "true" : "false",
+      command_timeout_sec_, heartbeat_timeout_sec_, feedback_timeout_sec_, stopped_hold_sec_,
+      stopping_timeout_sec_, stopped_linear_threshold_, stopped_angular_threshold_, publish_period);
   }
 
 private:
@@ -105,6 +228,18 @@ private:
 
   void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
   {
+    enforceTimeouts();
+    if (stop_requested_ || !ready()) {
+      sendCombinedControlCommand(0.0, 0.0);
+      return;
+    }
+    if (!std::isfinite(msg->linear.x * linear_scale_) ||
+      !std::isfinite(msg->angular.z * angular_scale_))
+    {
+      latchFault("invalid_command");
+      sendCombinedControlCommand(0.0, 0.0);
+      return;
+    }
     if (wheel_radius_ <= 0.0 || max_forward_speed_ <= 0.0 ||
       max_reverse_speed_ <= 0.0 || max_angular_speed_ <= 0.0 ||
       max_steering_angle_deg_ <= 0.0 || min_steering_speed_ < 0.0)
@@ -129,12 +264,231 @@ private:
     }
 
     // 发送组合控制指令（线速度+角速度）给STM32
+    if (linear_x == 0.0) {
+      beginStop();
+    } else {
+      stopping_ = false;
+      stopped_ = false;
+      zero_tracking_ = false;
+      command_received_ = true;
+      last_command_ = std::chrono::steady_clock::now();
+    }
     sendCombinedControlCommand(linear_x, angular_z);
 
     // 发布控制模式状态
     std_msgs::msg::Int32 mode_msg;
     mode_msg.data = auto_mode_ ? 1 : 0;
     status_pub_->publish(mode_msg);
+  }
+
+  bool ready() const
+  {
+    return fault_.empty() && !emergency_held_ && !manual_override_ &&
+           (!feedback_required_ || feedbackFresh()) &&
+           (!task_control_required_ || heartbeatFresh());
+  }
+
+  bool heartbeatFresh() const
+  {
+    return heartbeat_received_ && std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - last_heartbeat_).count() <= heartbeat_timeout_sec_;
+  }
+
+  void emergencyInputChanged()
+  {
+    if (emergency_input_ || legacy_emergency_input_) {
+      emergency_held_ = true;
+      stop_requested_ = true;
+      beginStop();
+      sendCombinedControlCommand(0.0, 0.0);
+    }
+  }
+
+  bool rawFeedbackFresh() const
+  {
+    if (!raw_feedback_required_) return true;
+    if (!raw_feedback_valid_) return false;
+    const double receive_age = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - last_raw_feedback_).count();
+    const double source_age = (now().nanoseconds() - raw_feedback_stamp_ns_) * 1e-9;
+    return receive_age <= feedback_timeout_sec_ && source_age <= feedback_timeout_sec_ &&
+      source_age >= -feedback_future_tolerance_sec_;
+  }
+
+  void rawFeedbackCallback(const nav_msgs::msg::Odometry & msg)
+  {
+    enforceTimeouts();
+    const int64_t stamp = static_cast<int64_t>(msg.header.stamp.sec) * 1000000000LL +
+      msg.header.stamp.nanosec;
+    const double source_age = (now().nanoseconds() - stamp) * 1e-9;
+    const auto & pose = msg.pose.pose;
+    const auto & q = pose.orientation;
+    const double norm = q.x * q.x + q.y * q.y + q.z * q.z + q.w * q.w;
+    raw_feedback_valid_ = msg.header.frame_id == raw_feedback_frame_id_ &&
+      msg.child_frame_id == raw_feedback_child_frame_id_ &&
+      msg.header.stamp.sec >= 0 && msg.header.stamp.nanosec < 1000000000U &&
+      stamp > 0 && stamp > last_raw_valid_stamp_ns_ && std::isfinite(pose.position.x) &&
+      std::isfinite(pose.position.y) && std::isfinite(pose.position.z) &&
+      std::isfinite(norm) && std::abs(norm - 1.0) < 0.01 &&
+      source_age <= feedback_timeout_sec_ && source_age >= -feedback_future_tolerance_sec_;
+    raw_feedback_stamp_ns_ = stamp;
+    last_raw_feedback_ = std::chrono::steady_clock::now();
+    if (raw_feedback_valid_) last_raw_valid_stamp_ns_ = stamp;
+    // Raw FAST-LIO carries no measured twist. It is evidence that the EKF's
+    // original measurements are current, never a zero-speed measurement.
+  }
+
+  bool feedbackFresh() const
+  {
+    if (!feedback_valid_ || !rawFeedbackFresh()) {
+      return false;
+    }
+    const auto receive_age = std::chrono::duration<double>(
+      std::chrono::steady_clock::now() - last_feedback_).count();
+    const double source_age = (now().nanoseconds() - feedback_stamp_ns_) * 1e-9;
+    return receive_age <= feedback_timeout_sec_ && source_age <= feedback_timeout_sec_ &&
+           source_age >= -feedback_future_tolerance_sec_;
+  }
+
+  void beginStop()
+  {
+    command_received_ = false;
+    if (!stopping_) {
+      stopping_ = true;
+      stopped_ = false;
+      zero_tracking_ = false;
+      stop_started_ = std::chrono::steady_clock::now();
+      stop_source_ns_ = now().nanoseconds();
+      stop_deadline_active_ = true;
+    }
+  }
+
+  void latchFault(const std::string & reason)
+  {
+    if (fault_.empty()) {
+      fault_ = reason;
+      RCLCPP_ERROR(get_logger(), "Automatic control inhibited: %s", reason.c_str());
+    }
+    stop_requested_ = true;
+    beginStop();
+    sendCombinedControlCommand(0.0, 0.0);
+  }
+
+  void feedbackCallback(const nav_msgs::msg::Odometry & msg)
+  {
+    // Detect a gap before replacing the expired sample. A late arrival must
+    // not hide an active-run fault between periodic safety checks.
+    enforceTimeouts();
+    const auto received_at = std::chrono::steady_clock::now();
+    const bool continuous = feedbackFresh();
+    // A malformed source stamp must inhibit control rather than throw out of
+    // the callback and leave the last physical command running.
+    const int64_t stamp = static_cast<int64_t>(msg.header.stamp.sec) * 1000000000LL +
+      msg.header.stamp.nanosec;
+    const double source_age = (now().nanoseconds() - stamp) * 1e-9;
+    const auto & twist = msg.twist.twist;
+    bool finite = std::isfinite(twist.linear.x) && std::isfinite(twist.linear.y) &&
+      std::isfinite(twist.linear.z) && std::isfinite(twist.angular.x) &&
+      std::isfinite(twist.angular.y) && std::isfinite(twist.angular.z);
+    for (const double covariance : msg.twist.covariance) {
+      finite = finite && std::isfinite(covariance);
+    }
+    for (size_t index = 0; index < 36; index += 7) {
+      finite = finite && msg.twist.covariance[index] >= 0.0;
+    }
+    feedback_received_ = true;
+    last_feedback_ = received_at;
+    feedback_stamp_ns_ = stamp;
+    feedback_valid_ = finite && msg.header.stamp.sec >= 0 &&
+      msg.header.stamp.nanosec < 1000000000U && stamp > 0 && stamp > last_valid_stamp_ns_ &&
+      source_age <= feedback_timeout_sec_ && source_age >= -feedback_future_tolerance_sec_;
+    if (feedback_valid_) {
+      last_valid_stamp_ns_ = stamp;
+    }
+    const bool near_zero = std::hypot(twist.linear.x, twist.linear.y) <=
+      stopped_linear_threshold_ && std::abs(twist.linear.z) <= stopped_linear_threshold_ &&
+      std::hypot(twist.angular.x, twist.angular.y) <= stopped_angular_threshold_ &&
+      std::abs(twist.angular.z) <= stopped_angular_threshold_;
+    if (!feedback_valid_ || !near_zero || !stopping_ || stamp < stop_source_ns_) {
+      zero_tracking_ = false;
+      stopped_ = false;
+      return;
+    }
+    if (!continuous || !zero_tracking_) {
+      zero_tracking_ = true;
+      zero_since_ = received_at;
+      zero_source_ns_ = stamp;
+      stopped_ = false;
+    }
+    // Only a newly received sample can extend the hold interval; a timer cannot
+    // turn a single zero sample into confirmation of a physical stop.
+    stopped_ = std::chrono::duration<double>(received_at - zero_since_).count() >=
+      stopped_hold_sec_ && (stamp - zero_source_ns_) * 1e-9 >= stopped_hold_sec_;
+    if (stopped_) {
+      stop_deadline_active_ = false;
+    }
+  }
+
+  void enforceTimeouts()
+  {
+    if (task_control_required_ && !stop_requested_ && !heartbeatFresh()) {
+      latchFault("heartbeat_timeout");
+    }
+    if (!feedbackFresh()) {
+      zero_tracking_ = false;
+      stopped_ = false;
+      if (command_received_ && feedback_required_) {
+        latchFault("feedback_timeout_or_invalid");
+      }
+    }
+    if (command_received_ &&
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - last_command_).count() >
+      command_timeout_sec_)
+    {
+      if (task_control_required_) {
+        latchFault("command_timeout");
+      } else {
+        beginStop();
+      }
+    }
+    if (stop_deadline_active_ && !stopped_ &&
+      std::chrono::duration<double>(std::chrono::steady_clock::now() - stop_started_).count() >
+      stopping_timeout_sec_)
+    {
+      latchFault("stopping_timeout");
+    }
+  }
+
+  void safetyTick()
+  {
+    enforceTimeouts();
+    if (!ready() || stop_requested_ || !command_received_) {
+      sendCombinedControlCommand(0.0, 0.0);
+    }
+    std_msgs::msg::String state;
+    std::ostringstream json;
+    json << std::boolalpha << "{\"ready\":" << ready() <<
+      ",\"stopped\":" << (stopped_ && feedbackFresh()) << ",\"stop_requested\":" << stop_requested_ <<
+      ",\"manual_override\":" << manual_override_ << ",\"emergency_stop\":" <<
+      emergency_held_ << ",\"fault\":\"" << fault_ <<
+      "\",\"feedback_valid\":" << feedbackFresh() << ",\"feedback_age_sec\":";
+    if (feedback_received_) {
+      json << std::max(0.0, std::max(
+          std::chrono::duration<double>(std::chrono::steady_clock::now() - last_feedback_).count(),
+          (now().nanoseconds() - feedback_stamp_ns_) * 1e-9));
+    } else {
+      json << "null";
+    }
+    json << ",\"feedback_stamp_sec\":";
+    if (feedback_received_) {
+      json << std::fixed << std::setprecision(9) << feedback_stamp_ns_ * 1e-9;
+    } else {
+      json << "null";
+    }
+    json << ",\"raw_feedback_required\":" << raw_feedback_required_ <<
+      ",\"raw_feedback_valid\":" << rawFeedbackFresh() << "}";
+    state.data = json.str();
+    state_pub_->publish(state);
   }
 
   void sendCombinedControlCommand(double linear_x, double angular_z)
@@ -213,14 +567,70 @@ private:
 
   // 控制模式
   bool auto_mode_ = false;  // 自动模式标志
+  double command_timeout_sec_ = 1.0;
+  bool command_received_ = false;
+  std::chrono::steady_clock::time_point last_command_;
+  rclcpp::TimerBase::SharedPtr safety_timer_;
+  bool task_control_required_ = false;
+  bool stop_requested_ = false;
+  bool heartbeat_received_ = false;
+  double heartbeat_timeout_sec_ = 1.0;
+  std::chrono::steady_clock::time_point last_heartbeat_;
+  std::string fault_;
+  bool emergency_input_ = false;
+  bool legacy_emergency_input_ = false;
+  bool emergency_held_ = false;
+  bool manual_override_ = false;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr manual_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr emergency_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr legacy_emergency_sub_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr reset_srv_;
+  bool raw_feedback_required_ = false;
+  std::string raw_feedback_frame_id_;
+  std::string raw_feedback_child_frame_id_;
+  bool raw_feedback_valid_ = false;
+  int64_t raw_feedback_stamp_ns_ = 0;
+  int64_t last_raw_valid_stamp_ns_ = 0;
+  std::chrono::steady_clock::time_point last_raw_feedback_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr raw_feedback_sub_;
+  bool feedback_required_ = true;
+  bool feedback_received_ = false;
+  bool feedback_valid_ = false;
+  double feedback_timeout_sec_ = 1.0;
+  double feedback_future_tolerance_sec_ = 0.1;
+  double stopped_hold_sec_ = 1.0;
+  double stopped_linear_threshold_ = 0.01;
+  double stopped_angular_threshold_ = 0.02;
+  double stopping_timeout_sec_ = 5.0;
+  bool stopping_ = true;
+  bool stopped_ = false;
+  bool zero_tracking_ = false;
+  bool stop_deadline_active_ = false;
+  int64_t feedback_stamp_ns_ = 0;
+  int64_t last_valid_stamp_ns_ = 0;
+  int64_t stop_source_ns_ = 0;
+  int64_t zero_source_ns_ = 0;
+  std::chrono::steady_clock::time_point last_feedback_;
+  std::chrono::steady_clock::time_point zero_since_;
+  std::chrono::steady_clock::time_point stop_started_;
+  rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr feedback_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr stop_sub_;
+  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr heartbeat_sub_;
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr state_pub_;
 };
 
 int main(int argc, char ** argv)
 {
   rclcpp::init(argc, argv);
 
-  auto node = std::make_shared<CmdVelToCANNode>();
-  rclcpp::spin(node);
+  try {
+    auto node = std::make_shared<CmdVelToCANNode>();
+    rclcpp::spin(node);
+  } catch (const std::exception & error) {
+    RCLCPP_FATAL(rclcpp::get_logger("cmd_vel_to_can_node"), "%s", error.what());
+    rclcpp::shutdown();
+    return 1;
+  }
 
   rclcpp::shutdown();
 

@@ -7,6 +7,7 @@
 #include <atomic>                    // 跨线程安全读写，一个线程写入（后台线程），一个线程读取（主循环）
 #include <mutex>                     //保护 current_data_ 的并发访问
 #include <thread>                    //后台串口读取线程
+#include "source_evidence.h"
 #include "rtk_types.h"               //定义了 RTKData 结构体
 
 class SerialReader {                 //没有继承任何基类。这是一个独立的类，不过很多序列化/反序列化的类名。
@@ -21,7 +22,8 @@ public:
     void startReading();             //启动后台读取线程 readingThread()。如果串口还没打开，先打开再启动线程
     void stopReading();              //设置 running_ = false → join() 等待线程结束 → 关闭串口
     
-    RTKData getLatestData();         //获取最新的 RTK 数据快照
+    RtkSourceState getSourceState() const;
+    RTKData getLatestData(RtkSourceState * evidence = nullptr);         //获取最新的 RTK 数据快照
     bool isConnected() const;        // 返回 connected_（串口是否处于打开状态）
     std::string getStatus() const;   // "NO DATA" after one second without position updates.
     
@@ -43,6 +45,7 @@ private:
     std::atomic<bool> running_;      //是否正在运行
     
     // 数据相关
+    SourceEvidence evidence_;
     RTKData current_data_;           //最新的 RTK 数据
     mutable std::mutex data_mutex_;  //保护 current_data_ 的互斥锁
     

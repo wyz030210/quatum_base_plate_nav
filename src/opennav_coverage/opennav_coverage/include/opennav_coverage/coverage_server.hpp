@@ -132,6 +132,11 @@ protected:
   std::unique_ptr<Visualizer> visualizer_;
   bool cartesian_frame_;
   bool default_generate_decomp_{false};
+  // Cache parameters read by compute; never acquire NodeParameters' mutex
+  // while holding dynamic_params_lock_ (the parameter callback takes the reverse order).
+  bool validate_path_bounds_{false};
+  double robot_length_{0.88};
+  double path_boundary_margin_{0.03};
 };
 
 }  // namespace opennav_coverage

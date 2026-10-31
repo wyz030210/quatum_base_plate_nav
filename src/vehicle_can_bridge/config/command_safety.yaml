@@ -1,0 +1,21 @@
+cmd_vel_to_can_node:
+  ros__parameters:
+    # Ordinary Nav2 accepts each fresh goal after normal idle. Task launch must
+    # enable supervisor heartbeat and explicit authorization with this switch.
+    task_control_required: false
+    command_timeout_sec: 1.0
+    heartbeat_timeout_sec: 1.0
+    feedback_required: true
+    # Task mode defaults raw_feedback_required to true. Leave the override
+    # absent so enabling task_control_required also enables this evidence gate.
+    raw_feedback_topic: /Odometry
+    raw_feedback_frame_id: odom
+    raw_feedback_child_frame_id: base_link
+    feedback_topic: /odometry/filtered_odom
+    feedback_timeout_sec: 1.0
+    feedback_future_tolerance_sec: 0.1
+    stopped_linear_threshold: 0.01
+    stopped_angular_threshold: 0.02
+    stopped_hold_sec: 1.0
+    stopping_timeout_sec: 5.0
+    safety_publish_period_sec: 0.05

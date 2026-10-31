@@ -10,6 +10,8 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 # --- message generation -----------------------------------------------------
@@ -41,7 +43,7 @@ install(TARGETS can_bridge DESTINATION lib/${PROJECT_NAME})
 add_executable(cmd_vel_to_can src/cmd_vel_to_can_node.cpp)
 target_include_directories(cmd_vel_to_can PRIVATE
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
-ament_target_dependencies(cmd_vel_to_can rclcpp std_msgs geometry_msgs)
+ament_target_dependencies(cmd_vel_to_can rclcpp std_msgs geometry_msgs nav_msgs std_srvs)
 target_link_libraries(cmd_vel_to_can "${cpp_typesupport_target}")
 install(TARGETS cmd_vel_to_can DESTINATION lib/${PROJECT_NAME})
 
@@ -68,12 +70,19 @@ install(DIRECTORY
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
   find_package(ament_lint_auto REQUIRED)
   ament_lint_auto_find_test_dependencies()
 
   ament_add_gtest(test_ackermann_steering test/test_ackermann_steering.cpp)
   target_include_directories(test_ackermann_steering PRIVATE
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+  ament_add_pytest_test(test_command_safety test/test_command_safety.py
+    TIMEOUT 90
+    ENV "COMMAND_ENTRY_EXECUTABLE=$<TARGET_FILE:cmd_vel_to_can>"
+      "ROS_LOG_DIR=${CMAKE_CURRENT_BINARY_DIR}/test_ros_logs"
+    APPEND_ENV "PYTHONPATH=${CMAKE_CURRENT_BINARY_DIR}/rosidl_generator_py")
+  set_tests_properties(test_command_safety PROPERTIES RUN_SERIAL TRUE)
 endif()
 
 ament_export_dependencies(rosidl_default_runtime)

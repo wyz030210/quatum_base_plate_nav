@@ -12,6 +12,8 @@ setup(
         ('share/' + package_name, ['package.xml']),
         ('share/' + package_name + '/launch', glob('launch/*.py')),
         ('share/' + package_name + '/config', glob('config/*.yaml')),
+        ('share/' + package_name + '/rviz', glob('rviz/*.rviz')),
+        ('share/' + package_name + '/docs', glob('docs/*.md')),
     ],
     install_requires=['setuptools', 'PyYAML'],
     zip_safe=True,
@@ -24,6 +26,10 @@ setup(
     },
     entry_points={
         'console_scripts': [
+            'localization_provider = nav2_mission.localization_provider_node:main',
+            'task_control_node = nav2_mission.task_control_node:main',
+            'task_control = nav2_mission.task_cli:main',
+            'field_preflight = nav2_mission.field_preflight:main',
             'patrol_mission_node = nav2_mission.patrol_mission_node:main',
             'facility_detection_node = nav2_mission.facility_detection_node:main',
             'coverage_navpath_bridge_node = nav2_mission.coverage_navpath_bridge_node:main',

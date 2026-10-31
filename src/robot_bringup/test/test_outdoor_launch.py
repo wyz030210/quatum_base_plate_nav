@@ -106,9 +106,10 @@ def test_outdoor_starts_current_hardware_and_both_ekfs():
     for filename in ("auto_control.launch.py", "msg_MID360_launch.py",
                      "mapping.launch.py", "location_launch.py", "nav2.launch.py"):
         include_named(description, context, filename)
-    assert {n["name"] for n in nodes} == {"ekf_odom_node", "ekf_map_node"}
+    enabled = [n for n in nodes if not n.get("condition") or n["condition"].evaluate(context)]
+    assert {n["name"] for n in enabled} == {"ekf_odom_node", "ekf_map_node"}
     assert all(n["parameters"][-1]["use_sim_time"].evaluate(context) is False
-               for n in nodes)
+               for n in enabled)
     assert arguments(include_named(description, context, "mapping.launch.py"), context)["rviz"] == "false"
 
 

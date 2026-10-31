@@ -1,0 +1,9 @@
+# Session-only editor operation: status/configure/point/undo/clear/close_outer/
+# begin_hole/close_hole/start. JSON object parameters are operation-scoped.
+string operation
+string request_json
+---
+bool accepted
+string task_id
+string message
+string state_json
