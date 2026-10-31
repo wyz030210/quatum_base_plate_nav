@@ -25,6 +25,9 @@ def test_control_window_runs_and_cancels_through_unified_manager(coverage_system
 
     try:
         until(lambda: gui.region.service_is_ready() and gui.cancel_task.service_is_ready())
+        assert gui.edit('configure', {
+            'operation_width': 0.7, 'default_swath_angle': 0.3}).accepted
+        until(lambda: gui.initialized and not gui._worker_lock.locked())
         boundary['hold'] = 'follow'
         for x, y in [(0., 0.), (8., 0.), (8., 8.), (0., 8.)]:
             operation('point', x=x, y=y)

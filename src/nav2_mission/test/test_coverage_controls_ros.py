@@ -36,7 +36,7 @@ def controls():
     boundary = {'goals': [], 'hold': False, 'release': threading.Event(),
                 'error': 0, 'cancels': 0, 'paths': []}
     for name, value in {'task_parameter_owner': '', 'task_parameter_release': '',
-                        'operation_width': 0.6, 'default_swath_angle': 1.57,
+                        'operation_width': 0.5, 'default_swath_angle': 0.75,
                         'swath_spacing': 1.5, 'default_headland_width': 1.5,
                         'min_turning_radius': 0.95}.items():
         preview.declare_parameter(name, value)
@@ -78,6 +78,7 @@ def controls():
     thread.start()
     until(lambda: gui.region.service_is_ready() and gui.cancel_task.service_is_ready())
     until(lambda: gui.compute.server_is_ready() and gui.set_params.service_is_ready())
+    until(lambda: gui.initialized and not gui._worker_lock.locked())
 
     def operation(name, **payload):
         gui.submit(name, **payload)
@@ -115,6 +116,49 @@ def notices(gui):
         if kind == 'notice':
             result.append(value)
     return result
+
+
+def test_initial_configuration_comes_from_loaded_planner(controls):
+    gui, _, _, boundary, _, _ = controls
+    until(lambda: gui.state is not None)
+    until(lambda: gui.state['planner']['operation_width'] == 0.5, timeout=2)
+    assert gui.state['planner']['default_swath_angle'] == 0.75
+    assert not boundary['goals']
+
+
+def test_reinitialization_preserves_runtime_configuration(controls):
+    gui, _, _, _, operation, region_call = controls
+    operation('configure', operation_width=0.7, default_swath_angle=0.4)
+    reply = region_call('initialize', operation_width=0.5, default_swath_angle=0.75)
+    assert reply.accepted
+    state = json.loads(reply.state_json)
+    assert state['planner'] == {'operation_width': 0.7, 'default_swath_angle': 0.4}
+    gui.initialized = False
+    operation('initialize')
+    assert gui.initialized and gui.state['planner'] == state['planner']
+
+
+def test_initialization_preserves_partial_explicit_configuration(controls):
+    gui, _, _, _, _, _ = controls
+    from nav2_mission.coverage_editor_node import EditOnlyManager
+    from nav2_mission.coverage_session import CoverageSession
+    session = CoverageSession(EditOnlyManager())
+    assert session.command('configure', {'operation_width': 0.7})['accepted']
+    reply = session.command('initialize', {
+        'operation_width': 0.5, 'default_swath_angle': 0.75})
+    assert reply['accepted'] and reply['state']['planner_initialized']
+    assert reply['state']['planner'] == {
+        'operation_width': 0.7, 'default_swath_angle': 0.75}
+
+
+def test_planning_applies_visible_values_before_debounce_completion(controls):
+    gui, preview, _, boundary, operation, _ = controls
+    rectangle(operation)
+    operation('preview', operation_width=0.55, default_swath_angle=0.2)
+    assert boundary['goals']
+    assert preview.get_parameter('operation_width').value == 0.55
+    assert preview.get_parameter('default_swath_angle').value == 0.2
+    assert gui.state['planner'] == {'operation_width': 0.55, 'default_swath_angle': 0.2}
 
 
 def test_startup_is_idle_and_preview_uses_only_dedicated_planner(controls):

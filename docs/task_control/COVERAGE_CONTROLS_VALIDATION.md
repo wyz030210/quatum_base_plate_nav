@@ -1,5 +1,24 @@
 # Coverage control window validation
 
+## Loaded defaults and runtime edits (2026-10-31)
+
+The original regression reproduced a planner loaded with width 0.5 while the
+editor/window retained 0.6. Startup now atomically initializes unset session
+values from the loaded preview planner; explicit session edits are preserved.
+The window displays no fixed numeric fallback while initialization is pending.
+
+The updated related suite passed 127 tests, including a real Tk input test:
+initial width/angle reflect the loaded values, edits apply after debounce, and
+an immediate planning click applies the visible values before dispatch. Invalid
+inputs remain unapplied and active task snapshots remain frozen. Four existing
+Shapely deprecation warnings remain. Code was built into both a test overlay
+and the user's current workspace install.
+
+The user's preview was restarted with an explicit source YAML path. Both the
+real planner and initialized editor reported width 0.5 and angle 1.57; the old
+five-vertex geometry was restored without restoring its stale 0.6 setting.
+The user's source YAML was preserved as an uncommitted local change.
+
 Validated on ROS 2 Humble with localhost-only ROS domains, fake vehicle
 boundaries for execution tests, and the real OpenNav planner for static preview.
 No hardware nodes or vehicle movement were used.

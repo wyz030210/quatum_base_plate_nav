@@ -16,6 +16,7 @@ from opennav_coverage_msgs.action import ComputeCoveragePath
 from opennav_coverage_msgs.msg import Coordinate, Coordinates
 from rcl_interfaces.srv import GetParameters, SetParametersAtomically
 from rclpy.action import ActionClient
+from rclpy.clock import Clock, ClockType
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from rclpy.parameter import Parameter, parameter_value_to_python
@@ -98,10 +99,33 @@ class CoverageControls(Node):
         self._worker = None
         self._worker_lock = threading.Lock()
         self._state_lock = threading.RLock()
+        self.initialized = False
         self.create_subscription(String, '/coverage/editor_state', self.on_state, durable)
         self.create_subscription(OccupancyGrid, '/map', self.on_map, durable)
         if self.execution_enabled:
             self.create_subscription(String, '/task_control/status_snapshot', self.on_task, 10)
+        self.create_timer(0.5, self.bootstrap, clock=Clock(clock_type=ClockType.STEADY_TIME))
+
+    def bootstrap(self):
+        if (not self.initialized and not self._closing.is_set() and
+                not self._worker_lock.locked()):
+            self.submit('initialize')
+
+    def initialize(self):
+        state = json.loads(self.edit('status').state_json)
+        if not state.get('planner_initialized'):
+            names = ['operation_width', 'default_swath_angle']
+            reply = self.call(self.get_params, GetParameters.Request(names=names))
+            settings = dict(zip(names, map(parameter_value_to_python, reply.values)))
+            if set(settings) != set(names) or any(v is None for v in settings.values()):
+                raise RuntimeError('规划器参数尚未加载，正在等待初始化。')
+            response = self.edit('initialize', settings)
+            if not response.accepted:
+                raise RuntimeError('无法初始化界面参数：' + response.message)
+            state = json.loads(response.state_json)
+        self.initialized = True
+        self.events.put(('ready', state))
+        self.notice('已加载规划参数；可直接修改，停止输入后自动应用。')
 
     def on_map(self, message):
         self.occupancy = message
@@ -140,22 +164,40 @@ class CoverageControls(Node):
 
     def submit(self, operation, **payload):
         if self._closing.is_set():
-            return
+            return False
         if operation == 'cancel':
             self.request_cancel()
-            return
+            return True
+        if operation not in ('initialize', 'status') and not self.initialized:
+            self.notice('正在读取加载的规划参数，请稍候。')
+            return False
         if not self._worker_lock.acquire(blocking=False):
             self.notice('正在处理上一项操作，请稍候。')
-            return
+            return False
 
         def work():
             try:
+                if operation == 'initialize':
+                    self.initialize()
+                    return
+                if operation == 'start' and not self.execution_enabled:
+                    raise ValueError('预览模式不能启动车辆任务。')
+                if operation in ('preview', 'start') and payload:
+                    configured = self.edit('configure', payload)
+                    self.events.put(('configuration', {
+                        'request': payload, 'state': json.loads(configured.state_json)}))
+                    if not configured.accepted:
+                        raise ValueError('参数未通过：' + configured.message)
+                    payload_for_operation = {}
+                else:
+                    payload_for_operation = payload
                 if operation == 'preview':
                     self.preview()
                 else:
-                    if operation == 'start' and not self.execution_enabled:
-                        raise ValueError('预览模式不能启动车辆任务。')
-                    reply = self.edit(operation, payload)
+                    reply = self.edit(operation, payload_for_operation)
+                    if operation == 'configure':
+                        self.events.put(('configuration', {
+                            'request': payload, 'state': json.loads(reply.state_json)}))
                     self.notice(('操作成功：' + OPERATION_LABELS.get(operation, operation)
                                  if reply.accepted
                                  else '未通过：' + reply.message))
@@ -165,6 +207,7 @@ class CoverageControls(Node):
                 self._worker_lock.release()
         self._worker = threading.Thread(target=work, daemon=True)
         self._worker.start()
+        return True
 
     def request_cancel(self):
         # Task cancellation must not queue behind a potentially slow preview.
@@ -342,7 +385,10 @@ class CoverageWindow:
         self.state = tk.StringVar(value='')
         self.task = tk.StringVar(value='')
         self.settings = tk.StringVar(value='预览使用当前选区宽度和方向；参数将在规划前读取。')
-        self._settings_loaded = False
+        self._field_dirty = False
+        self._syncing_fields = False
+        self._apply_after = None
+        self._mutating_widgets = []
         ttk.Label(self.root, text='覆盖选区编辑与路径预览',
                   font=('', 14, 'bold')).pack(pady=10)
         ttk.Label(self.root, text='在 RViz 选择 Publish Point，按边界顺序点击；\n'
@@ -353,25 +399,29 @@ class CoverageWindow:
                 ('闭合外边界', 'close_outer'), ('开始孔洞', 'begin_hole'),
                 ('闭合孔洞', 'close_hole'), ('撤销', 'undo'),
                 ('清空', 'clear'), ('刷新状态', 'status')]):
-            ttk.Button(buttons, text=label, command=lambda op=operation:
-                       controls.submit(op)).grid(row=i // 3, column=i % 3, padx=5, pady=5)
+            button = ttk.Button(buttons, text=label, command=lambda op=operation:
+                                controls.submit(op))
+            button.grid(row=i // 3, column=i % 3, padx=5, pady=5)
+            if operation != 'status':
+                self._mutating_widgets.append(button)
         configuration = ttk.Frame(self.root)
         configuration.pack(pady=4)
-        self.width = tk.StringVar(value='0.6')
-        self.angle = tk.StringVar(value='1.57')
+        self.width = tk.StringVar(value='')
+        self.angle = tk.StringVar(value='')
         for label, variable in [('作业宽度（米）', self.width), ('条带方向（弧度）', self.angle)]:
             ttk.Label(configuration, text=label).pack(side='left', padx=3)
-            ttk.Entry(configuration, textvariable=variable, width=7).pack(side='left')
-
-        def configure():
-            try:
-                controls.submit('configure', operation_width=float(self.width.get()),
-                                default_swath_angle=float(self.angle.get()))
-            except ValueError:
-                self.notice.set('宽度和方向必须为有效数字。')
-        ttk.Button(configuration, text='应用', command=configure).pack(side='left', padx=5)
-        ttk.Button(self.root, text='生成覆盖路径（仅预览，不控制车辆）',
-                   command=lambda: controls.submit('preview')).pack(pady=8)
+            entry = ttk.Entry(configuration, textvariable=variable, width=7)
+            entry.pack(side='left')
+            entry.bind('<Return>', lambda _: self.apply_fields(explicit=True))
+            self._mutating_widgets.append(entry)
+            variable.trace_add('write', self.fields_changed)
+        apply_button = ttk.Button(configuration, text='应用',
+                                  command=lambda: self.apply_fields(explicit=True))
+        apply_button.pack(side='left', padx=5)
+        preview_button = ttk.Button(self.root, text='生成覆盖路径（仅预览，不控制车辆）',
+                                    command=lambda: self.request_action('preview'))
+        preview_button.pack(pady=8)
+        self._mutating_widgets.extend([apply_button, preview_button])
         if controls.execution_enabled:
             task_buttons = ttk.Frame(self.root)
             task_buttons.pack(pady=4)
@@ -380,8 +430,10 @@ class CoverageWindow:
                 if messagebox.askyesno('启动覆盖任务',
                                        '确认通过统一任务管理启动覆盖？车辆可能开始运动。',
                                        parent=self.root):
-                    controls.submit('start')
-            ttk.Button(task_buttons, text='启动覆盖任务', command=start).pack(side='left', padx=5)
+                    self.request_action('start')
+            start_button = ttk.Button(task_buttons, text='启动覆盖任务', command=start)
+            start_button.pack(side='left', padx=5)
+            self._mutating_widgets.append(start_button)
             ttk.Button(task_buttons, text='取消任务并停车',
                        command=lambda: controls.submit('cancel')).pack(side='left', padx=5)
         for variable in (self.notice, self.state, self.task, self.settings):
@@ -391,8 +443,67 @@ class CoverageWindow:
                   '路径预览不自动避开地图障碍；中心栅格检查不代替车体碰撞检查。',
                   wraplength=640, justify='left').pack(side='bottom', padx=12, pady=10)
         self.root.protocol('WM_DELETE_WINDOW', self.root.quit)
+        self.update_widgets()
         self.root.after(100, self.poll)
-        self.root.after(500, lambda: controls.submit('status'))
+
+    def field_values(self):
+        width, angle = float(self.width.get()), float(self.angle.get())
+        if (not math.isfinite(width) or width <= 0 or not math.isfinite(angle) or
+                not -math.pi <= angle <= math.pi):
+            raise ValueError('作业宽度必须大于零，方向应为 [-π, π] 内的弧度。')
+        return {'operation_width': width, 'default_swath_angle': angle}
+
+    def sync_fields(self, state):
+        self._syncing_fields = True
+        try:
+            self.width.set(str(state['planner']['operation_width']))
+            self.angle.set(str(state['planner']['default_swath_angle']))
+        finally:
+            self._syncing_fields = False
+
+    def fields_changed(self, *_):
+        if self._syncing_fields:
+            return
+        self._field_dirty = True
+        if self._apply_after is not None:
+            self.root.after_cancel(self._apply_after)
+        self._apply_after = self.root.after(500, self.apply_fields)
+
+    def apply_fields(self, explicit=False):
+        if self._apply_after is not None:
+            self.root.after_cancel(self._apply_after)
+            self._apply_after = None
+        if not self._field_dirty:
+            return
+        try:
+            values = self.field_values()
+        except ValueError as exc:
+            if explicit:
+                self.notice.set(str(exc))
+            return
+        if (not self.controls.initialized or self.controls._worker_lock.locked() or
+                (self.controls.state or {}).get('active')):
+            self._apply_after = self.root.after(300, self.apply_fields)
+            return
+        self.controls.submit('configure', **values)
+
+    def request_action(self, operation):
+        try:
+            values = self.field_values()
+        except ValueError as exc:
+            self.notice.set(str(exc))
+            return
+        if self._apply_after is not None:
+            self.root.after_cancel(self._apply_after)
+            self._apply_after = None
+        # Submit the visible values before planning/start even if debounce is pending.
+        self.controls.submit(operation, **values)
+
+    def update_widgets(self):
+        idle = (self.controls.initialized and not self.controls._worker_lock.locked() and
+                not (self.controls.state or {}).get('active'))
+        for widget in self._mutating_widgets:
+            widget.configure(state='normal' if idle else 'disabled')
 
     def poll(self):
         while True:
@@ -409,10 +520,24 @@ class CoverageWindow:
                 self.state.set(f"状态：{mode}；外边界 {len(rings[0])} 点；"
                                f"孔洞 {len(rings)-1} 个；有效："
                                + ('是' if value['valid'] else '否'))
-                if not self._settings_loaded:
-                    self.width.set(str(value['planner']['operation_width']))
-                    self.angle.set(str(value['planner']['default_swath_angle']))
-                    self._settings_loaded = True
+                if self.controls.initialized:
+                    self.state.set(self.state.get() +
+                                   f"；已应用宽度 {value['planner']['operation_width']} 米，"
+                                   f"方向 {value['planner']['default_swath_angle']} 弧度")
+                    if value.get('active'):
+                        self._field_dirty = False
+                    if not self._field_dirty:
+                        self.sync_fields(value)
+            elif kind == 'ready':
+                self._field_dirty = False
+                self.sync_fields(value)
+            elif kind == 'configuration':
+                try:
+                    if self.field_values() == value['request']:
+                        self._field_dirty = False
+                        self.sync_fields(value['state'])
+                except ValueError:
+                    pass
             elif kind == 'task':
                 phases = {'idle': '空闲', 'dependency_check': '检查依赖', 'preparing': '准备',
                           'planning': '规划', 'validating': '校验路径', 'approaching': '前往起点',
@@ -428,6 +553,7 @@ class CoverageWindow:
                          'default_headland_width': '地头宽度', 'min_turning_radius': '转弯半径'}
                 self.settings.set('本次预览参数：' + '；'.join(
                     f'{names.get(name, name)} {item} 米' for name, item in value.items()))
+        self.update_widgets()
         if rclpy.ok() and not self.controls._closing.is_set():
             self.root.after(100, self.poll)
         else:

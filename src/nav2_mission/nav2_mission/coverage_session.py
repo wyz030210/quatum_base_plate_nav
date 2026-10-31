@@ -14,6 +14,8 @@ class CoverageSession:
         self.editor = RegionEditor()
         self.frame_id = 'map'
         self.planner = {'operation_width': 0.60, 'default_swath_angle': 1.57}
+        self.planner_initialized = False
+        self._planner_configured_keys = set()
 
     def request(self):
         snapshot = self.editor.snapshot(self.planner['operation_width'])
@@ -32,6 +34,7 @@ class CoverageSession:
                     self.editor.outer, *self.editor.holes)],
                 'draft_hole': [[p.x, p.y] for p in self.editor.draft_hole],
                 'planner': copy.deepcopy(self.planner), 'valid': valid, 'error': error,
+                'planner_initialized': self.planner_initialized,
                 'active': self.manager.active}
 
     def command(self, operation, payload):
@@ -40,6 +43,8 @@ class CoverageSession:
                 raise ValueError('expected JSON object')
             if operation == 'status':
                 return self.reply(True, 'session state')
+            if operation == 'initialize' and self.planner_initialized:
+                return self.reply(True, 'existing session configuration preserved')
             if self.manager.active:
                 raise ValueError('task active or stop unconfirmed; editing/start refused')
             if operation == 'start':
@@ -47,8 +52,16 @@ class CoverageSession:
                     raise ValueError('start uses confirmed session configuration; configure first')
                 reply = self.manager.start('coverage', self.request())
                 return dict(reply, state=self.status())
-            if operation == 'configure':
+            if operation in ('configure', 'initialize'):
+                if operation == 'initialize':
+                    if set(payload) != set(self.planner):
+                        raise ValueError(
+                            'initialize requires operation_width and default_swath_angle')
+                    payload = dict(payload, **{
+                        key: self.planner[key] for key in self._planner_configured_keys})
                 self.configure(payload)
+                self._planner_configured_keys.update(set(payload) & set(self.planner))
+                self.planner_initialized = self._planner_configured_keys == set(self.planner)
             elif operation == 'point':
                 if set(payload) - {'x', 'y', 'frame_id'}:
                     raise ValueError('unknown point field')

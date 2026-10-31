@@ -24,13 +24,34 @@ vehicle driver, controller or velocity publisher. Standalone region `start`
 requests are explicitly rejected. `use_coverage_gui:=false` and
 `use_rviz:=false` allow headless software checks.
 
+On a fresh launch the window reads the preview planner's actually loaded
+`operation_width` and `default_swath_angle`, then initializes the shared region
+configuration. Fields remain empty/disabled until those values are available;
+there is no UI fallback to 0.6 m. Explicit existing session changes are preserved
+when only the window is reopened, including partial CLI configuration.
+
 In RViz select **Publish Point**, draw the outer ring, then use **闭合外边界**.
 Use **开始孔洞** and **闭合孔洞** for exclusions; **撤销** and **清空** operate on
-the shared region session. Set the operation width and swath angle in radians,
-click **应用**, then **生成覆盖路径**. Editing clears the old displayed preview;
+the shared region session. Set the operation width and swath angle in radians;
+valid edits apply after 500 ms without input, or immediately with Enter/**应用**.
+The status line shows the confirmed values. **生成覆盖路径** also applies the
+visible values before dispatch, even if the debounce has not completed.
+Invalid values are not applied. Editing clears the old displayed preview;
 late results for a changed region are discarded. Planning failures display the
 action status/error code; the planner log contains the detailed geometric reason.
 The preview path is `/coverage_ui/preview_path`, shown as Coverage Preview in RViz.
+
+These edits affect this runtime session and subsequent planning/task requests;
+they do not rewrite YAML or alter an already active task. Inputs are locked
+while an operation/task is active. A complete restart reloads the selected YAML.
+ROS normally resolves the default file in the installed package, not `src`.
+After editing the source YAML rebuild/source its package, or select it explicitly:
+
+```bash
+ros2 launch wheeltec_nav2 coverage_preview.launch.py params_file:=/absolute/source/coverage_params.yaml
+```
+
+Vehicle launch entries use `coverage_params_file:=...` for the same purpose.
 
 Preview uses a dedicated planner under `/coverage_preview`. It leases that
 planner's requested width/angle, reads its effective spacing/headland/turn radius,
