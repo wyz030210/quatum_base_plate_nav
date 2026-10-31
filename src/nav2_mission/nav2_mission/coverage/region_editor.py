@@ -52,15 +52,79 @@ def _normalize_ring(
     return tuple(cleaned)
 
 
+def _is_local_convex_corner(ring, start_index, start_distance, end, width, tolerance):
+    """Recognize a short, continuously convex outer-boundary arc.
+
+    Finite limits deliberately make long shallow tapers and substantial flat
+    end faces conservative. This is a sampled heuristic, not a clearance proof.
+    """
+    count = len(ring) - 1
+    lengths = [math.hypot(ring[i + 1][0] - ring[i][0],
+                          ring[i + 1][1] - ring[i][1]) for i in range(count)]
+    # Find every segment containing the hit: vertices belong to two segments.
+    ends = []
+    for i in range(count):
+        segment = LineString([ring[i], ring[i + 1]])
+        if segment.distance(end) <= tolerance:
+            ends.append((i, segment.project(end)))
+            # At most two segments meet at a simple vertex. Dense or near-touching
+            # boundaries are ambiguous at this tolerance; do not exempt them.
+            # This also bounds arc traversal by the existing probe-work limit.
+            if len(ends) > 2:
+                return False
+
+    def turn(vertex):
+        a, b, c = ring[(vertex - 1) % count], ring[vertex], ring[(vertex + 1) % count]
+        ux, uy = b[0] - a[0], b[1] - a[1]
+        vx, vy = c[0] - b[0], c[1] - b[1]
+        return math.atan2(ux * vy - uy * vx, ux * vx + uy * vy)
+
+    def forward(i, position, j, target):
+        if i == j and target >= position:
+            return False
+        distance = lengths[i] - position
+        vertices = []
+        while i != j and len(vertices) <= count:
+            i = (i + 1) % count
+            vertices.append(i)
+            if i != j:
+                distance += lengths[i]
+        if i != j:
+            return False
+        distance += target
+        if distance > 6.0 * width:
+            return False
+        turns = [turn(v) for v in vertices]
+        if any(angle < -1e-9 for angle in turns):
+            return False
+        # Near reversal of the boundary indicates opposing passage sides,
+        # even when a smooth semicircle has no substantial flat face.
+        if sum(turns) > 11 * math.pi / 12:
+            return False
+        # A substantial straight face with enough turn on each side is a
+        # blunt end, including when those turns are rounded into small facets.
+        left_turn = 0.0
+        remaining_turn = sum(turns)
+        for k in range(len(vertices) - 1):
+            left_turn += turns[k]
+            remaining_turn -= turns[k]
+            if (left_turn > math.pi / 12 and remaining_turn > math.pi / 12
+                    and lengths[vertices[k]] > width / 16):
+                return False
+        return bool(vertices)
+
+    return any(forward(start_index, start_distance, i, position) or
+               forward(i, position, start_index, start_distance)
+               for i, position in ends)
+
+
 def _has_narrow_sampled_passage(polygon: Polygon, width: float) -> bool:
-    """Probe inward normals at a finite scale; exempt an adjacent convex corner."""
+    """Probe inward normals at a finite scale, with local convex-corner exemptions."""
     # Removing redundant collinear vertices preserves the exact polygon while
     # ensuring a straight side split into segments still has one corner.
     polygon = polygon.simplify(0, preserve_topology=True)
     rings = [list(ring.coords) for ring in (polygon.exterior, *polygon.interiors)]
     boundary = polygon.boundary
-    shell = Polygon(polygon.exterior)
-    convex_shell = shell.equals(shell.convex_hull)
     spacing = width / 8.0
     if spacing <= _EPSILON:
         raise ValueError("region too complex for operation width validation")
@@ -71,8 +135,6 @@ def _has_narrow_sampled_passage(polygon: Polygon, width: float) -> bool:
     if (sample_count > MAX_GEOMETRY_SAMPLES or
             sample_count * segment_count > MAX_GEOMETRY_WORK):
         raise ValueError("region too complex for operation width validation")
-    if convex_shell and not polygon.interiors:
-        return False  # Every hit would be an exempt convex-shell hit.
     tolerance = max(_EPSILON, width * 1e-7)
     for ring_index, ring in enumerate(rings):
         count = len(ring) - 1
@@ -95,29 +157,10 @@ def _has_narrow_sampled_passage(polygon: Polygon, width: float) -> bool:
                 if hit.is_empty:
                     continue
                 end = nearest_points(Point(x, y), hit)[1]
-                # A convex shell can taper to an ordinary sharp or rounded
-                # corner. The erosion check still rejects an entirely narrow
-                # convex region, and hits on holes are still checked below.
-                if (ring_index == 0 and convex_shell and
-                        polygon.exterior.distance(end) <= tolerance):
+                if ring_index == 0 and _is_local_convex_corner(
+                        ring, index, t, end, width, tolerance):
                     continue
-                # Adjacent edges meeting at a convex vertex form an ordinary
-                # corner, even when the local gap near its point is tiny.
-                adjacent_corner = False
-                adjacent = ((index, (index - 1) % count),
-                            (index + 1, (index + 1) % count))
-                for vertex_index, other_index in adjacent:
-                    before = ring[(vertex_index - 1) % count]
-                    vertex = ring[vertex_index % count]
-                    after = ring[(vertex_index + 1) % count]
-                    cross = ((vertex[0] - before[0]) * (after[1] - vertex[1]) -
-                             (vertex[1] - before[1]) * (after[0] - vertex[0]))
-                    if cross > 0 and LineString([
-                            ring[other_index], ring[other_index + 1]]).distance(end) <= tolerance:
-                        adjacent_corner = True
-                        break
-                if not adjacent_corner:
-                    return True
+                return True
     return False
 
 

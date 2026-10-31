@@ -181,6 +181,7 @@ def curved_branch_polygon():
 
 @pytest.mark.parametrize('polygons,planner', [
     (curved_branch_polygon(), {'operation_width': 0.6}),
+    ([[[0, 0], [30, 0], [30, 0.2], [0, 4]]], {'operation_width': 0.6}),
     ([[[0, 0], [4, 4], [0, 4], [4, 0]]], {}),
     ([[[0, 0], [8, 0], [8, 8], [0, 8]], [[7, 7], [9, 7], [9, 9], [7, 9]]], {}),
     ([[[0, 0], [8, 0], [8, 8], [0, 8]], [[0, 2], [1, 1], [1, 3]]], {}),
